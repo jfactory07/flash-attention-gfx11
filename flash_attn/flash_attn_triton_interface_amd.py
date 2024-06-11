@@ -1,8 +1,11 @@
-from .flash_attn_triton_kernel_amd import MetaData, attention, get_shape_from_layout, _attn_bwd_preprocess, _attn_bwd
 import torch
 import triton
+from .flash_attn_triton_kernel_amd import MetaData, attention, get_shape_from_layout, _attn_bwd_preprocess, _attn_bwd
+from .flash_attn_triton_decode_amd import attention_inference
 
 DEBUG=False
+DEBUG_KVCACHE=True
+
 
 def fwd(q,
         k,
@@ -130,7 +133,8 @@ def varlen_fwd(
 
     return tri_out, q , k , v, o, softmax_lse, softmax_p, torch.get_rng_state()
 
-def fwd_kvcache( 
+
+def fwd_kvcache(
         q,
         k_cache,
         v_cache,
@@ -149,7 +153,94 @@ def fwd_kvcache(
         window_size_right,
         rotary_interleaved,
         num_splits):
-    pass
+    
+    if DEBUG_KVCACHE:
+        print()
+        print("flash_attn_triton_amd.py::fwd_kvcache")
+        print("q:", q.shape)
+        print("k_cache:", k_cache.shape)
+        print("v_cache:", v_cache.shape)
+        print("k:", k)
+        print("v:", v)
+        print("cache_seqlens:", cache_seqlens)
+        print("rotary_cos:", rotary_cos)
+        print("rotary_sin:", rotary_sin)
+        print("cache_batch_idx:", cache_batch_idx)
+        print("block_table:", block_table)
+        print("alibi_slopes:", alibi_slopes)
+        print("out:", out)
+        print("softmax_scale:", softmax_scale)
+        print("causal:", causal)
+        print("window_size_left:", window_size_left)
+        print("window_size_right:", window_size_right)
+        print("rotary_interleaved:", rotary_interleaved)
+        print("num_splits:", num_splits)
+    
+    if out is None:
+        out = torch.empty_like(q)
+
+    if True:
+        q_input = q
+        k_input = k_cache
+        v_input = v_cache
+
+        if out is None:
+            out = torch.empty_like(q)
+
+        # Setup metadata
+        seqlen_q = q_input.shape[1]
+        seqlen_k = k_input.shape[1]
+        input_metadata = MetaData(sm_scale=softmax_scale)
+        input_metadata.max_seqlens_q = seqlen_q
+        input_metadata.max_seqlens_k = seqlen_k
+        input_metadata.layout = "bshd"
+
+        batch, nheads_q, nheads_k, head_size = get_shape_from_layout(q_input, k_input, input_metadata)
+        
+        if causal:
+            input_metadata.need_causal()
+        
+        if alibi_slopes is not None:
+            input_metadata.need_alibi(alibi_slopes, batch, nheads_q)
+
+        if False:
+            # Create key padding mask
+            arange = torch.arange(seqlen_k, device=q.device).unsqueeze(0)
+            print("arange:", arange)
+            cache_seqlens_expanded = cache_seqlens.unsqueeze(1)
+            print("cache_seqlens_expanded:", cache_seqlens_expanded)
+            key_padding_mask = arange < cache_seqlens_expanded
+
+            # Modify key_padding_mask to have batch and nheads_q as first two dimensions
+            key_padding_mask = key_padding_mask.unsqueeze(0).unsqueeze(0).expand(batch, nheads_q, seqlen_q, -1)
+            print("key_padding_mask:", key_padding_mask)
+            # Add key padding mask to metadata
+            input_metadata.key_padding_mask = key_padding_mask
+
+        # cache seqglen
+        input_metadata.cache_seqlens = cache_seqlens
+    
+        # Check arguments
+        input_metadata.check_args(q_input, k_input, v_input, out)
+
+        # Perform the forward attention computation
+        tri_out, encoded_softmax = attention(q_input, k_input, v_input, out, input_metadata)
+
+        softmax_lse = encoded_softmax
+        softmax_p = encoded_softmax
+    else:
+        q_input=q.unsqueeze(3)
+        k_input=k_cache.unsqueeze(3)
+        v_input=v_cache.unsqueeze(3)
+        
+        tri_out = attention_inference(q_input, k_input, v_input, softmax_scale)
+
+    if DEBUG_KVCACHE:
+        print()
+        print("tri_out:", tri_out.shape)
+
+
+    return tri_out, None
 
 
 def bwd(dout, q, k, v, out, softmax_lse, dq, dk, dv, alibi_slopes, dropout_p, softmax_scale,  causal, window_size_left,
