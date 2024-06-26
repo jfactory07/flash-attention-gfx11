@@ -40,7 +40,7 @@ class MetaData():
     num_contexts = 0
     varlen = False
     layout = None
-    key_padding_mask = None
+    cache_seqlens = None
     dropout_p, return_encoded_softmax = 0.0, False
 
     def __repr__(self) -> str:
@@ -55,6 +55,7 @@ class MetaData():
                 f"  num_contexts={self.num_contexts},\n"
                 f"  varlen={self.varlen},\n"
                 f"  layout={self.layout},\n"
+                f"  cache_seqlens={self.cache_seqlens},\n"
                 f"  dropout_p={self.dropout_p},\n"
                 f"  return_encoded_softmax={self.return_encoded_softmax}\n"
                 f")")
@@ -225,7 +226,7 @@ def compute_alibi_tensor(alibi_slopes, seqlen_q, seqlen_k):
 
 
 @triton.jit
-def _attn_fwd_inner(acc, l_i, m_i, q, k_ptrs, v_ptrs, bias_ptrs, key_padding_mask_ptrs, stride_kn, stride_vk, stride_bn, stride_mn, start_m,
+def _attn_fwd_inner(acc, l_i, m_i, q, k_ptrs, v_ptrs, bias_ptrs, stride_kn, stride_vk, stride_bn, start_m,
                     actual_seqlen_k, actual_seqlen_q, dropout_p, philox_seed, batch_philox_offset, encoded_sm_ptrs,
                     block_min, block_max, offs_n_causal, masked_blocks, n_extra_tokens, alibi_slope,
                     IS_CAUSAL: tl.constexpr, BLOCK_M: tl.constexpr, BLOCK_DMODEL: tl.constexpr, BLOCK_N: tl.constexpr,
@@ -260,30 +261,39 @@ def _attn_fwd_inner(acc, l_i, m_i, q, k_ptrs, v_ptrs, bias_ptrs, key_padding_mas
                 size_n = start_n + OFFS_N[None, :]
                 mask = size_n < boundary_m[:, None]
                 qk = tl.where(mask, qk, float("-inf"))
-        
+        if IS_CAUSAL:
+            causal_boundary = start_n + offs_n_causal
+            causal_mask = OFFS_M[:, None] >= causal_boundary[None, :]
+            qk = tl.where(causal_mask, qk, float("-inf"))
         # -- compute qk ----
         qk += tl.dot(q, k)
         # print("qk:", qk)
 
         # Apply key padding mask
-        if key_padding_mask_ptrs is not None:
-            # mask = tl.load(key_padding_mask + off_z * stride_maskb + offs_n)
-            # mask_offs_n = start_n + tl.arange(0, BLOCK_N) if MASK_STEPS else None
-            # key_mask = load_fn(key_padding_mask_ptrs, OFFS_M, mask_offs_n, actual_seqlen_q, actual_seqlen_k)
-            # qk = tl.where(key_mask, qk, float('-inf'))
-            # print("qk after key_mask:", qk)
+        # if key_padding_mask_ptrs is not None:
+        #     # mask = tl.load(key_padding_mask + off_z * stride_maskb + offs_n)
+        #     # mask_offs_n = start_n + tl.arange(0, BLOCK_N) if MASK_STEPS else None
+        #     # key_mask = load_fn(key_padding_mask_ptrs, OFFS_M, mask_offs_n, actual_seqlen_q, actual_seqlen_k)
+        #     # qk = tl.where(key_mask, qk, float('-inf'))
+        #     # print("qk after key_mask:", qk)
         
-            if IS_CAUSAL:
-                # offs_n_causal = offs_n + (seqlen_q - seqlen_k)
-                causal_boundary = start_n + offs_n_causal
-                causal_mask = OFFS_M[:, None] >= causal_boundary[None, :]
-                qk = tl.where(causal_mask, qk, float("-inf"))
-                # print("qk after causal_mask:", qk)
-        else:
-            if IS_CAUSAL:
-                causal_boundary = start_n + offs_n_causal
-                causal_mask = OFFS_M[:, None] >= causal_boundary[None, :]
-                qk = tl.where(causal_mask, qk, float("-inf"))
+        #     if IS_CAUSAL:
+        #         # offs_n_causal = offs_n + (seqlen_q - seqlen_k)
+        #         causal_boundary = start_n + offs_n_causal
+        #         causal_mask = OFFS_M[:, None] >= causal_boundary[None, :]
+        #         qk = tl.where(causal_mask, qk, float("-inf"))
+        #         # print("qk after causal_mask:", qk)
+        # else:
+        # if cache_seqlen is not None:
+        #     global_m_positions = start_m * BLOCK_M + tl.arange(0, BLOCK_M)
+        #     global_n_positions = start_n + tl.arange(0, cache_seqlen)
+
+
+
+        # if IS_CAUSAL:
+        #     causal_boundary = start_n + offs_n_causal
+        #     causal_mask = OFFS_M[:, None] >= causal_boundary[None, :]
+        #     qk = tl.where(causal_mask, qk, float("-inf"))
 
         if bias_ptrs is not None:
             bias_offs_n = start_n + tl.arange(0, BLOCK_N) if MASK_STEPS else None
@@ -330,8 +340,8 @@ def _attn_fwd_inner(acc, l_i, m_i, q, k_ptrs, v_ptrs, bias_ptrs, key_padding_mas
         v_ptrs += BLOCK_N * stride_vk
         if bias_ptrs is not None:
             bias_ptrs += BLOCK_N * stride_bn
-        if key_padding_mask_ptrs is not None:
-            key_padding_mask_ptrs += BLOCK_N * stride_mn
+        # if key_padding_mask_ptrs is not None:
+        #     key_padding_mask_ptrs += BLOCK_N * stride_mn
         if RETURN_ENCODED_SOFTMAX:
             encoded_sm_ptrs += BLOCK_N
     return acc, l_i, m_i
@@ -364,14 +374,14 @@ def _attn_fwd_inner(acc, l_i, m_i, q, k_ptrs, v_ptrs, bias_ptrs, key_padding_mas
     use_cuda_graph=True,
 )
 @triton.jit
-def attn_fwd(Q, K, V, bias, key_padding_mask, sm_scale, L, Out, stride_qz, stride_qh, stride_qm, stride_qk, stride_kz, stride_kh,
+def attn_fwd(Q, K, V, bias, cache_seqlens, sm_scale, L, Out, stride_qz, stride_qh, stride_qm, stride_qk, stride_kz, stride_kh,
              stride_kn, stride_kk, stride_vz, stride_vh, stride_vk, stride_vn, stride_oz, stride_oh, stride_om,
-             stride_on, stride_bz, stride_bh, stride_bm, stride_bn, stride_mz, stride_mh, stride_mm, stride_mn,stride_az, stride_ah, cu_seqlens_q, cu_seqlens_k,
+             stride_on, stride_bz, stride_bh, stride_bm, stride_bn, stride_cz, stride_az, stride_ah, cu_seqlens_q, cu_seqlens_k,
              dropout_p, philox_seed, philox_offset_base, encoded_softmax, alibi_slopes, HQ: tl.constexpr,
              HK: tl.constexpr, ACTUAL_BLOCK_DMODEL: tl.constexpr, MAX_SEQLENS_Q: tl.constexpr,
              MAX_SEQLENS_K: tl.constexpr, VARLEN: tl.constexpr, IS_CAUSAL: tl.constexpr, BLOCK_M: tl.constexpr,
-             BLOCK_DMODEL: tl.constexpr, BLOCK_N: tl.constexpr, PRE_LOAD_V: tl.constexpr, USE_BIAS: tl.constexpr, USE_MASK: tl.constexpr,
-             ENABLE_DROPOUT: tl.constexpr, RETURN_ENCODED_SOFTMAX: tl.constexpr, USE_ALIBI: tl.constexpr):
+             BLOCK_DMODEL: tl.constexpr, BLOCK_N: tl.constexpr, PRE_LOAD_V: tl.constexpr, USE_BIAS: tl.constexpr,
+             USE_CACHE_SEQLENS: tl.constexpr, ENABLE_DROPOUT: tl.constexpr, RETURN_ENCODED_SOFTMAX: tl.constexpr, USE_ALIBI: tl.constexpr):
     start_m = tl.program_id(0)
     off_h_q = tl.program_id(1)
     off_z = tl.program_id(2)
@@ -393,6 +403,12 @@ def attn_fwd(Q, K, V, bias, key_padding_mask, sm_scale, L, Out, stride_qz, strid
         cu_seqlens_q_start = 0
         cu_seqlens_k_start = 0
         seqlen_q = MAX_SEQLENS_Q
+        seqlen_k = MAX_SEQLENS_K
+
+        
+    if USE_CACHE_SEQLENS:
+        seqlen_k = tl.load(cache_seqlens + off_z * stride_cz )
+    else:
         seqlen_k = MAX_SEQLENS_K
 
     # Now we compute whether we need to exit early due to causal masking.
@@ -460,11 +476,11 @@ def attn_fwd(Q, K, V, bias, key_padding_mask, sm_scale, L, Out, stride_qz, strid
     else:
         bias_ptrs = None
 
-    if USE_MASK:
-        mask_offset = off_h_q * stride_mh
-        key_padding_mask_ptrs = key_padding_mask + mask_offset + offs_m[:, None] * stride_mm + offs_n[None, :] * stride_mn
-    else:
-        key_padding_mask_ptrs = None
+    # if USE_MASK:
+    #     mask_offset = off_h_q * stride_mh
+    #     key_padding_mask_ptrs = key_padding_mask + mask_offset + offs_m[:, None] * stride_mm + offs_n[None, :] * stride_mn
+    # else:
+    #     key_padding_mask_ptrs = None
 
     if USE_ALIBI:
         a_offset = off_z * stride_az + off_h_q * stride_ah
@@ -518,7 +534,7 @@ def attn_fwd(Q, K, V, bias, key_padding_mask, sm_scale, L, Out, stride_qz, strid
     # value because there is no masking. Similarly we do not need padding.
     if n_full_blocks > 0:
         block_max = (n_blocks - masked_blocks) * BLOCK_N
-        acc, l_i, m_i = _attn_fwd_inner(acc, l_i, m_i, q, k_ptrs, v_ptrs, bias_ptrs, key_padding_mask_ptrs, stride_kn, stride_vk, stride_bn, stride_mn,
+        acc, l_i, m_i = _attn_fwd_inner(acc, l_i, m_i, q, k_ptrs, v_ptrs, bias_ptrs, stride_kn, stride_vk, stride_bn,
                                         start_m, seqlen_k, seqlen_q, dropout_p, philox_seed, batch_philox_offset,
                                         encoded_sm_ptrs,
                                         # _, _, offs_n_causal, masked_blocks, n_extra_tokens, _
@@ -542,11 +558,11 @@ def attn_fwd(Q, K, V, bias, key_padding_mask, sm_scale, L, Out, stride_qz, strid
         v_ptrs += n_full_blocks * BLOCK_N * stride_vk
         if USE_BIAS:
             bias_ptrs += n_full_blocks * BLOCK_N * stride_bn
-        if USE_MASK:
-            key_padding_mask_ptrs += n_full_blocks * BLOCK_N * stride_mn
+        # if USE_MASK:
+        #     key_padding_mask_ptrs += n_full_blocks * BLOCK_N * stride_mn
         if RETURN_ENCODED_SOFTMAX:
             encoded_sm_ptrs += n_full_blocks * BLOCK_N
-        acc, l_i, m_i = _attn_fwd_inner(acc, l_i, m_i, q, k_ptrs, v_ptrs, bias_ptrs, key_padding_mask_ptrs, stride_kn, stride_vk, stride_bn, stride_mn,
+        acc, l_i, m_i = _attn_fwd_inner(acc, l_i, m_i, q, k_ptrs, v_ptrs, bias_ptrs, stride_kn, stride_vk, stride_bn,
                                         start_m, seqlen_k, seqlen_q, dropout_p, philox_seed, batch_philox_offset,
                                         encoded_sm_ptrs, block_min, block_max, offs_n_causal, masked_blocks,
                                         n_extra_tokens, alibi_slope, IS_CAUSAL, BLOCK_M, BLOCK_DMODEL, BLOCK_N, offs_m,
@@ -973,19 +989,26 @@ class _attention(torch.autograd.Function):
         else:
             alibi_strides = (0, 0)
 
-        if metadata.key_padding_mask is not None:
-            mask_strides = (metadata.key_padding_mask.stride(0), metadata.key_padding_mask.stride(1), metadata.key_padding_mask.stride(2),
-                            metadata.key_padding_mask.stride(3))
-        else:
-            mask_strides = (0, 0, 0, 0)
+        # if metadata.key_padding_mask is not None:
+        #     mask_strides = (metadata.key_padding_mask.stride(0), metadata.key_padding_mask.stride(1), metadata.key_padding_mask.stride(2),
+        #                     metadata.key_padding_mask.stride(3))
+        # else:
+        #     mask_strides = (0, 0, 0, 0)
 
-        attn_fwd[grid](q, k, v, metadata.bias, metadata.key_padding_mask, metadata.sm_scale, M, o, *q_strides, *k_strides, *v_strides, *o_strides,
-                       *bias_strides, *mask_strides, *alibi_strides, metadata.cu_seqlens_q, metadata.cu_seqlens_k,
+        if metadata.cache_seqlens is not None:
+            cache_seqlens_strides = (metadata.cache_seqlens.stride(0), )
+        else:
+            cache_seqlens_strides = (0, )
+        print("cache_seqlens_strides:", cache_seqlens_strides)
+
+        attn_fwd[grid](q, k, v, metadata.bias, metadata.cache_seqlens, metadata.sm_scale, M, o, *q_strides, *k_strides, *v_strides, *o_strides,
+                       *bias_strides, *cache_seqlens_strides, *alibi_strides, metadata.cu_seqlens_q, metadata.cu_seqlens_k,
                        dropout_p=metadata.dropout_p, philox_seed=philox_seed, philox_offset_base=philox_offset,
                        encoded_softmax=encoded_softmax, alibi_slopes=metadata.alibi_slopes, HQ=nheads_q, HK=nheads_k,
                        ACTUAL_BLOCK_DMODEL=head_size, MAX_SEQLENS_Q=metadata.max_seqlens_q,
                        MAX_SEQLENS_K=metadata.max_seqlens_k, IS_CAUSAL=metadata.causal, VARLEN=metadata.varlen,
-                       BLOCK_DMODEL=padded_d_model, USE_BIAS=False if metadata.bias is None else True, USE_MASK=False if metadata.key_padding_mask is None else True,
+                       BLOCK_DMODEL=padded_d_model, USE_BIAS=False if metadata.bias is None else True,
+                       USE_CACHE_SEQLENS=False if metadata.cache_seqlens is None else True,
                        USE_ALIBI=False if metadata.alibi_slopes is None else True, ENABLE_DROPOUT=metadata.dropout_p
                        > 0.0, RETURN_ENCODED_SOFTMAX=metadata.return_encoded_softmax)
 

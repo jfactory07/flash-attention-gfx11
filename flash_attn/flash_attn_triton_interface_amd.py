@@ -4,6 +4,7 @@ from .flash_attn_triton_kernel_amd import MetaData, attention, get_shape_from_la
 from .flash_attn_triton_decode_amd import attention_inference
 
 DEBUG=False
+DEBUG_VARLEN=True
 DEBUG_KVCACHE=True
 
 
@@ -91,11 +92,25 @@ def varlen_fwd(
         return_softmax,
         gen_):
     
-    if DEBUG:
+    if DEBUG_VARLEN:
         print("flash_attn_triton_amd.py::varlen_fwd")
         print("q:", q.shape)
         print("k:", k.shape)
         print("v:", v.shape)
+        print("cu_seqlens_q:", cu_seqlens_q)
+        print("cu_seqlens_k:", cu_seqlens_k)
+        print("block_table_:", block_table_)
+        print("alibi_slopes:", alibi_slopes)
+        print("max_seqlen_q:", max_seqlen_q)
+        print("max_seqlen_k:", max_seqlen_k)
+        print("dropout_p:", dropout_p)
+        print("softmax_scale:", softmax_scale)
+        print("zero_tensors:", zero_tensors)
+        print("causal:", causal)
+        print("window_size_left:", window_size_left)
+        print("window_size_right:", window_size_right)
+        print("return_softmax:", return_softmax)
+        print("gen_:", gen_)
 
     if dropout_p != 0.0:
         raise ValueError("dropout is not supported on HIP")
@@ -162,7 +177,7 @@ def fwd_kvcache(
         print("v_cache:", v_cache.shape)
         print("k:", k)
         print("v:", v)
-        print("cache_seqlens:", cache_seqlens)
+        print("cache_seqlens:", cache_seqlens, cache_seqlens.size())
         print("rotary_cos:", rotary_cos)
         print("rotary_sin:", rotary_sin)
         print("cache_batch_idx:", cache_batch_idx)
@@ -194,6 +209,7 @@ def fwd_kvcache(
         input_metadata.max_seqlens_q = seqlen_q
         input_metadata.max_seqlens_k = seqlen_k
         input_metadata.layout = "bshd"
+        
 
         batch, nheads_q, nheads_k, head_size = get_shape_from_layout(q_input, k_input, input_metadata)
         
@@ -217,7 +233,7 @@ def fwd_kvcache(
             # Add key padding mask to metadata
             input_metadata.key_padding_mask = key_padding_mask
 
-        # cache seqglen
+        # cache seqglen (similar logic to varlen)
         input_metadata.cache_seqlens = cache_seqlens
     
         # Check arguments
