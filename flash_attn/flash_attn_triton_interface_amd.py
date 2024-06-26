@@ -219,21 +219,7 @@ def fwd_kvcache(
         if alibi_slopes is not None:
             input_metadata.need_alibi(alibi_slopes, batch, nheads_q)
 
-        if False:
-            # Create key padding mask
-            arange = torch.arange(seqlen_k, device=q.device).unsqueeze(0)
-            print("arange:", arange)
-            cache_seqlens_expanded = cache_seqlens.unsqueeze(1)
-            print("cache_seqlens_expanded:", cache_seqlens_expanded)
-            key_padding_mask = arange < cache_seqlens_expanded
-
-            # Modify key_padding_mask to have batch and nheads_q as first two dimensions
-            key_padding_mask = key_padding_mask.unsqueeze(0).unsqueeze(0).expand(batch, nheads_q, seqlen_q, -1)
-            print("key_padding_mask:", key_padding_mask)
-            # Add key padding mask to metadata
-            input_metadata.key_padding_mask = key_padding_mask
-
-        # cache seqglen (similar logic to varlen)
+        # cache seqlens (seqlens in kvcache) (b x 1)
         input_metadata.cache_seqlens = cache_seqlens
     
         # Check arguments

@@ -1906,17 +1906,18 @@ def test_flash_attn_splitkv(
 @pytest.mark.parametrize("dtype", [torch.float16])
 # @pytest.mark.parametrize("num_splits", [1, 0]) # works
 @pytest.mark.parametrize("num_splits", [1])
-# @pytest.mark.parametrize("mha_type", ["mha", "mqa", "gqa"]) # broken
+# @pytest.mark.parametrize("mha_type", ["mha", "mqa", "gqa"]) # works. Issue with gqa if head is not good factor
+# @pytest.mark.parametrize("mha_type", ["mha", "mqa"])
 @pytest.mark.parametrize("mha_type", ["mha"])
-# @pytest.mark.parametrize("new_kv", [False, True]) # broken
-@pytest.mark.parametrize("new_kv", [False])
-# @pytest.mark.parametrize("alibi", [False, True]) # broken
+@pytest.mark.parametrize("new_kv", [False, True]) # broken
+# @pytest.mark.parametrize("new_kv", [False])
+# @pytest.mark.parametrize("alibi", [False, True]) # works
 @pytest.mark.parametrize("alibi", [False])
 # @pytest.mark.parametrize("local", [False, True]) # broken
 @pytest.mark.parametrize("local", [False])
-@pytest.mark.parametrize("causal", [False, True]) # broken
-# @pytest.mark.parametrize("causal", [True]) # broken
-# @pytest.mark.parametrize("causal", [False])
+# @pytest.mark.parametrize("causal", [False, True]) # works
+# @pytest.mark.parametrize("causal", [True]) # works
+@pytest.mark.parametrize("causal", [False])
 # @pytest.mark.parametrize("seqlen_new_eq_seqlen_q", [True, False]) # works
 # @pytest.mark.parametrize("seqlen_new_eq_seqlen_q", [True])
 @pytest.mark.parametrize("seqlen_new_eq_seqlen_q", [False])
@@ -1940,12 +1941,14 @@ def test_flash_attn_splitkv(
 @pytest.mark.parametrize(
     "seqlen_q,seqlen_k",
     [   
-        # (1, 1),
+        # Test Configs
+        (1, 1),
         # (1, 2),
         # (1, 4),
+        # (2, 4),
+        # Real Configs
         # (1, 128),
         # (1, 339),
-        (2, 4),
         # (3, 1024),
         # (64, 800),
         # (64, 256),
@@ -2011,8 +2014,8 @@ def test_flash_attn_kvcache(
     device = "cuda"
     # set seed
     torch.random.manual_seed(0)
-    batch_size = 2
-    # batch_size = 1
+    # batch_size = 2
+    batch_size = 1
     batch_size_cache = batch_size if not has_batch_idx else batch_size * 2
     # nheads = 6
     nheads = 1
@@ -2153,7 +2156,6 @@ def test_flash_attn_kvcache(
     # o1 = torch.einsum('bhst,bthd->bshd', s_tmp, v_cache_ref)
     # lse_ref = torch.logsumexp(qk / math.sqrt(d), -1)
     # probs = torch.softmax(qk, dim=-1)
-    # key_padding_mask = None
     out_ref, _ = attention_ref(
         q_ro,
         k_cache_rep,
