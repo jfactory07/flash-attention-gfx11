@@ -149,6 +149,23 @@ def varlen_fwd(
     return tri_out, q , k , v, o, softmax_lse, softmax_p, torch.get_rng_state()
 
 
+def update_cache_inplace(cache, new_seq):
+    # Ensure cache and new_seq are 4D tensors
+    assert cache.dim() == 4 and new_seq.dim() == 4, "cache and new_seq should be 4D tensors (B, S, H, D)"
+    
+    # Ensure cache and new_seq have compatible dimensions
+    assert cache.shape[0] == new_seq.shape[0], "Batch sizes don't match"
+    assert cache.shape[2] == new_seq.shape[2], "Number of heads don't match"
+    assert cache.shape[3] == new_seq.shape[3], "Head dimensions don't match"  
+    # Get the sequence length of new_seq
+    new_seq_len = new_seq.shape[1]
+    
+    # Ensure the cache is large enough to accommodate new_seq
+    assert cache.shape[1] >= new_seq_len, "Cache sequence length must be >= new sequence length"
+    
+    # Overwrite the last new_seq_len entries in cache with new_seq
+    cache[:, -new_seq_len:, :, :] = new_seq
+
 def fwd_kvcache(
         q,
         k_cache,
@@ -173,10 +190,10 @@ def fwd_kvcache(
         print()
         print("flash_attn_triton_amd.py::fwd_kvcache")
         print("q:", q.shape)
-        print("k_cache:", k_cache.shape)
-        print("v_cache:", v_cache.shape)
-        print("k:", k)
-        print("v:", v)
+        print("k_cache:", k_cache, k_cache.shape)
+        print("v_cache:", v_cache, v_cache.shape)
+        print("k:", k, k.shape if k is not None else None)
+        print("v:", v, v.shape if v is not None else None)
         print("cache_seqlens:", cache_seqlens, cache_seqlens.size())
         print("rotary_cos:", rotary_cos)
         print("rotary_sin:", rotary_sin)
@@ -195,17 +212,23 @@ def fwd_kvcache(
         out = torch.empty_like(q)
 
     if True:
+        input_metadata = MetaData(sm_scale=softmax_scale)
+
         q_input = q
+
+        # modify kv_cache
+        if k is not None:
+            update_cache_inplace(k_cache, k)
+            input_metadata.new_kv = True
+        if v is not None:
+            update_cache_inplace(v_cache, v)
+            input_metadata.new_kv = True
+
         k_input = k_cache
         v_input = v_cache
 
-        if out is None:
-            out = torch.empty_like(q)
-
-        # Setup metadata
         seqlen_q = q_input.shape[1]
         seqlen_k = k_input.shape[1]
-        input_metadata = MetaData(sm_scale=softmax_scale)
         input_metadata.max_seqlens_q = seqlen_q
         input_metadata.max_seqlens_k = seqlen_k
         input_metadata.layout = "bshd"
@@ -221,6 +244,9 @@ def fwd_kvcache(
 
         # cache seqlens (seqlens in kvcache) (b x 1)
         input_metadata.cache_seqlens = cache_seqlens
+
+        if out is None:
+            out = torch.empty_like(q)
     
         # Check arguments
         input_metadata.check_args(q_input, k_input, v_input, out)

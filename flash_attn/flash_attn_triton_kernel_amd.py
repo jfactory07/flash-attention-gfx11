@@ -41,6 +41,7 @@ class MetaData():
     varlen = False
     layout = None
     cache_seqlens = None
+    new_kv = False
     dropout_p, return_encoded_softmax = 0.0, False
 
     def __repr__(self) -> str:
@@ -56,6 +57,7 @@ class MetaData():
                 f"  varlen={self.varlen},\n"
                 f"  layout={self.layout},\n"
                 f"  cache_seqlens={self.cache_seqlens},\n"
+                f"  new_kv={self.new_kv},\n"
                 f"  dropout_p={self.dropout_p},\n"
                 f"  return_encoded_softmax={self.return_encoded_softmax}\n"
                 f")")
@@ -354,7 +356,7 @@ def attn_fwd(Q, K, V, bias, cache_seqlens, sm_scale, L, Out, stride_qz, stride_q
              dropout_p, philox_seed, philox_offset_base, encoded_softmax, alibi_slopes, HQ: tl.constexpr,
              HK: tl.constexpr, ACTUAL_BLOCK_DMODEL: tl.constexpr, MAX_SEQLENS_Q: tl.constexpr,
              MAX_SEQLENS_K: tl.constexpr, VARLEN: tl.constexpr, IS_CAUSAL: tl.constexpr, BLOCK_M: tl.constexpr,
-             BLOCK_DMODEL: tl.constexpr, BLOCK_N: tl.constexpr, PRE_LOAD_V: tl.constexpr, USE_BIAS: tl.constexpr,
+             BLOCK_DMODEL: tl.constexpr, BLOCK_N: tl.constexpr, PRE_LOAD_V: tl.constexpr, USE_BIAS: tl.constexpr, NEW_KV: tl.constexpr,
              USE_CACHE_SEQLENS: tl.constexpr, ENABLE_DROPOUT: tl.constexpr, RETURN_ENCODED_SOFTMAX: tl.constexpr, USE_ALIBI: tl.constexpr):
     start_m = tl.program_id(0)
     off_h_q = tl.program_id(1)
@@ -380,7 +382,7 @@ def attn_fwd(Q, K, V, bias, cache_seqlens, sm_scale, L, Out, stride_qz, stride_q
         seqlen_k = MAX_SEQLENS_K
 
         
-    if USE_CACHE_SEQLENS:
+    if USE_CACHE_SEQLENS and not NEW_KV:
         seqlen_k = tl.load(cache_seqlens + off_z * stride_cz )
     else:
         seqlen_k = MAX_SEQLENS_K
@@ -903,10 +905,10 @@ class _attention(torch.autograd.Function):
         if DEBUG_KVCACHE:
             print()
             print("_attention.forward")
-            print("q:", q.shape)
-            print("k:", k.shape)
-            print("v:", v.shape)
-            print("o:", o.shape)
+            print("q:", q, q.shape)
+            print("k:", k, k.shape)
+            print("v:", v, v.shape)
+            print("o:", o, o.shape)
             print("metadata:", metadata)
 
         # NOTE: a large bias tensor leads to overflow during pointer arithmetic
@@ -969,6 +971,7 @@ class _attention(torch.autograd.Function):
                        MAX_SEQLENS_K=metadata.max_seqlens_k, IS_CAUSAL=metadata.causal, VARLEN=metadata.varlen,
                        BLOCK_DMODEL=padded_d_model, USE_BIAS=False if metadata.bias is None else True,
                        USE_CACHE_SEQLENS=False if metadata.cache_seqlens is None else True,
+                       NEW_KV = metadata.new_kv,
                        USE_ALIBI=False if metadata.alibi_slopes is None else True, ENABLE_DROPOUT=metadata.dropout_p
                        > 0.0, RETURN_ENCODED_SOFTMAX=metadata.return_encoded_softmax)
 

@@ -248,9 +248,9 @@ def attention_ref(
     if PRINT_DEBUG:
         print()
         print("attention_ref")
-        print("q:",q.shape)
-        print("k:",k.shape)
-        print("v:",v.shape)
+        print("q:", q, q.shape)
+        print("k:", k, k.shape)
+        print("v:", v, v.shape)
         print("query_padding_mask:",query_padding_mask)
         print("key_padding_mask:",key_padding_mask)
         print("attn_bias:",attn_bias)
@@ -1941,14 +1941,13 @@ def test_flash_attn_splitkv(
 @pytest.mark.parametrize(
     "seqlen_q,seqlen_k",
     [   
-        # Test Configs
-        (1, 1),
+        # (1, 1),
         # (1, 2),
         # (1, 4),
-        # (2, 4),
-        # Real Configs
+        (1, 8),
         # (1, 128),
         # (1, 339),
+        # (2, 4),
         # (3, 1024),
         # (64, 800),
         # (64, 256),
@@ -2216,6 +2215,15 @@ def test_flash_attn_kvcache(
                 "(b nblocks) block_size ... -> b (nblocks block_size) ...",
                 b=batch_size,
             )[:, :seqlen_k]
+        
+        if DEBUG_KVCACHE:
+            print("k:", k, k.shape)
+            print("k_cache:", k_cache, k_cache.shape)
+            print("k_cache_ref:", k_cache_ref, k_cache_ref.shape)
+            print("k_cache_select:", k_cache_select, k_cache_select.shape)
+        
+        assert torch.allclose(k_cache, k_cache_select, rtol=1e-3, atol=1e-3)
+        assert torch.allclose(k_cache, k_cache_ref, rtol=1e-3, atol=1e-3)
         assert torch.allclose(k_cache_select, k_cache_ref, rtol=1e-3, atol=1e-3)
         assert torch.equal(v_cache_select, v_cache_ref)
     mult = 3 if not alibi else 5
