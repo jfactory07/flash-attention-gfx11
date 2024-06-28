@@ -149,22 +149,70 @@ def varlen_fwd(
     return tri_out, q , k , v, o, softmax_lse, softmax_p, torch.get_rng_state()
 
 
-def update_cache_inplace(cache, new_seq):
+def new_cache(cache, new_seq, cache_seqlens):
+    print("cache before:", cache)
+    print("new_seq:", new_seq)
+    print("cache_seqlens:", cache_seqlens)
+    
     # Ensure cache and new_seq are 4D tensors
     assert cache.dim() == 4 and new_seq.dim() == 4, "cache and new_seq should be 4D tensors (B, S, H, D)"
     
     # Ensure cache and new_seq have compatible dimensions
     assert cache.shape[0] == new_seq.shape[0], "Batch sizes don't match"
     assert cache.shape[2] == new_seq.shape[2], "Number of heads don't match"
-    assert cache.shape[3] == new_seq.shape[3], "Head dimensions don't match"  
-    # Get the sequence length of new_seq
-    new_seq_len = new_seq.shape[1]
+    assert cache.shape[3] == new_seq.shape[3], "Head dimensions don't match"
     
-    # Ensure the cache is large enough to accommodate new_seq
-    assert cache.shape[1] >= new_seq_len, "Cache sequence length must be >= new sequence length"
+    batch_size, seqlen_k, nheads, d = cache.shape
+    seqlen_new = new_seq.shape[1]
     
-    # Overwrite the last new_seq_len entries in cache with new_seq
-    cache[:, -new_seq_len:, :, :] = new_seq
+    # Create a mask for updating
+    arange = torch.arange(seqlen_k, device=cache.device).unsqueeze(0)
+    cache_seqlens_expanded = cache_seqlens.unsqueeze(1)
+    update_mask = torch.logical_and(
+        cache_seqlens_expanded <= arange,
+        arange < cache_seqlens_expanded + seqlen_new
+    )
+    
+    # Create updated cache
+    updated_cache = cache.clone()
+    
+    # Update the cache with new_seq where the mask is True
+    updated_cache[update_mask] = new_seq.view(-1, nheads, d)
+    
+    print("cache after:", updated_cache)
+    return updated_cache
+
+def update_cache_inplace(cache, new_seq, cache_seqlens):
+    print("update_cache_inplace")
+    print("cache before:", cache)
+    print("new_seq:", new_seq)
+    print("cache_seqlens:", cache_seqlens)
+    
+    # Ensure cache and new_seq are 4D tensors
+    assert cache.dim() == 4 and new_seq.dim() == 4, "cache and new_seq should be 4D tensors (B, S, H, D)"
+    
+    # Ensure cache and new_seq have compatible dimensions
+    assert cache.shape[0] == new_seq.shape[0], "Batch sizes don't match"
+    assert cache.shape[2] == new_seq.shape[2], "Number of heads don't match"
+    assert cache.shape[3] == new_seq.shape[3], "Head dimensions don't match"
+    
+    batch_size, seqlen_k, nheads, d = cache.shape
+    seqlen_new = new_seq.shape[1]
+    
+    # Create a mask for updating
+    arange = torch.arange(seqlen_k, device=cache.device).unsqueeze(0)
+    cache_seqlens_expanded = cache_seqlens.unsqueeze(1)
+    update_mask = torch.logical_and(
+        cache_seqlens_expanded <= arange,
+        arange < cache_seqlens_expanded + seqlen_new
+    )
+    
+    # Update the cache in-place with new_seq where the mask is True
+    cache[update_mask] = new_seq.view(-1, nheads, d)
+    
+    print("cache after:", cache)
+    return cache
+
 
 def fwd_kvcache(
         q,
@@ -218,10 +266,10 @@ def fwd_kvcache(
 
         # modify kv_cache
         if k is not None:
-            update_cache_inplace(k_cache, k)
+            update_cache_inplace(k_cache, k, cache_seqlens)
             input_metadata.new_kv = True
         if v is not None:
-            update_cache_inplace(v_cache, v)
+            update_cache_inplace(v_cache, v, cache_seqlens)
             input_metadata.new_kv = True
 
         k_input = k_cache
