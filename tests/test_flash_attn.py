@@ -1909,12 +1909,12 @@ def test_flash_attn_splitkv(
 # @pytest.mark.parametrize("mha_type", ["mha", "mqa", "gqa"]) # works. Issue with gqa if head is not good factor
 # @pytest.mark.parametrize("mha_type", ["mha", "mqa"])
 @pytest.mark.parametrize("mha_type", ["mha"])
-@pytest.mark.parametrize("new_kv", [False, True]) # works
-# @pytest.mark.parametrize("new_kv", [False])
+# @pytest.mark.parametrize("new_kv", [False, True]) # works
+@pytest.mark.parametrize("new_kv", [False])
 # @pytest.mark.parametrize("alibi", [False, True]) # works
 @pytest.mark.parametrize("alibi", [False])
-# @pytest.mark.parametrize("local", [False, True]) # broken
-@pytest.mark.parametrize("local", [False])
+@pytest.mark.parametrize("local", [False, True]) # broken
+# @pytest.mark.parametrize("local", [False])
 # @pytest.mark.parametrize("causal", [False, True]) # works
 # @pytest.mark.parametrize("causal", [True]) # works
 @pytest.mark.parametrize("causal", [False])
@@ -2036,8 +2036,8 @@ def test_flash_attn_kvcache(
     else:
         k, v = None, None
     if paged_kv_block_size is None:
-        k_cache = torch.ones(batch_size_cache, seqlen_k, nheads_k, d, device=device, dtype=dtype)
-        v_cache = torch.ones(batch_size_cache, seqlen_k, nheads_k, d, device=device, dtype=dtype)
+        k_cache = torch.randn(batch_size_cache, seqlen_k, nheads_k, d, device=device, dtype=dtype)
+        v_cache = torch.randn(batch_size_cache, seqlen_k, nheads_k, d, device=device, dtype=dtype)
         block_table = None
     else:
         (
