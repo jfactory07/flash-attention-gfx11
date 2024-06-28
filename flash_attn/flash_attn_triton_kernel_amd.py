@@ -42,6 +42,7 @@ class MetaData():
     layout = None
     cache_seqlens = None
     new_kv = False
+    seqlen_new = None
     dropout_p, return_encoded_softmax = 0.0, False
 
     def __repr__(self) -> str:
@@ -58,6 +59,7 @@ class MetaData():
                 f"  layout={self.layout},\n"
                 f"  cache_seqlens={self.cache_seqlens},\n"
                 f"  new_kv={self.new_kv},\n"
+                f"  seqlen_new={self.seqlen_new},\n"
                 f"  dropout_p={self.dropout_p},\n"
                 f"  return_encoded_softmax={self.return_encoded_softmax}\n"
                 f")")
@@ -356,7 +358,7 @@ def attn_fwd(Q, K, V, bias, cache_seqlens, sm_scale, L, Out, stride_qz, stride_q
              dropout_p, philox_seed, philox_offset_base, encoded_softmax, alibi_slopes, HQ: tl.constexpr,
              HK: tl.constexpr, ACTUAL_BLOCK_DMODEL: tl.constexpr, MAX_SEQLENS_Q: tl.constexpr,
              MAX_SEQLENS_K: tl.constexpr, VARLEN: tl.constexpr, IS_CAUSAL: tl.constexpr, BLOCK_M: tl.constexpr,
-             BLOCK_DMODEL: tl.constexpr, BLOCK_N: tl.constexpr, PRE_LOAD_V: tl.constexpr, USE_BIAS: tl.constexpr, NEW_KV: tl.constexpr,
+             BLOCK_DMODEL: tl.constexpr, BLOCK_N: tl.constexpr, PRE_LOAD_V: tl.constexpr, USE_BIAS: tl.constexpr, NEW_KV: tl.constexpr, SEQLEN_NEW: tl.constexpr,
              USE_CACHE_SEQLENS: tl.constexpr, ENABLE_DROPOUT: tl.constexpr, RETURN_ENCODED_SOFTMAX: tl.constexpr, USE_ALIBI: tl.constexpr):
     start_m = tl.program_id(0)
     off_h_q = tl.program_id(1)
@@ -382,8 +384,14 @@ def attn_fwd(Q, K, V, bias, cache_seqlens, sm_scale, L, Out, stride_qz, stride_q
         seqlen_k = MAX_SEQLENS_K
 
         
-    if USE_CACHE_SEQLENS and not NEW_KV:
-        seqlen_k = tl.load(cache_seqlens + off_z * stride_cz )
+    if USE_CACHE_SEQLENS:
+        cache_seqlen = tl.load(cache_seqlens + off_z * stride_cz) # gives the index where the cache_seqlen ends
+        if cache_seqlen == 0 or cache_seqlen == MAX_SEQLENS_K:
+            seqlen_k = MAX_SEQLENS_K
+        elif NEW_KV == True:
+            seqlen_k = cache_seqlen + SEQLEN_NEW 
+        else:
+            seqlen_k = cache_seqlen # NOTE: we might have to add 1. cache_seqlen might be an index instaed of a length. This works for now.
     else:
         seqlen_k = MAX_SEQLENS_K
 
@@ -971,7 +979,7 @@ class _attention(torch.autograd.Function):
                        MAX_SEQLENS_K=metadata.max_seqlens_k, IS_CAUSAL=metadata.causal, VARLEN=metadata.varlen,
                        BLOCK_DMODEL=padded_d_model, USE_BIAS=False if metadata.bias is None else True,
                        USE_CACHE_SEQLENS=False if metadata.cache_seqlens is None else True,
-                       NEW_KV = metadata.new_kv,
+                       NEW_KV = metadata.new_kv, SEQLEN_NEW = metadata.seqlen_new,
                        USE_ALIBI=False if metadata.alibi_slopes is None else True, ENABLE_DROPOUT=metadata.dropout_p
                        > 0.0, RETURN_ENCODED_SOFTMAX=metadata.return_encoded_softmax)
 

@@ -265,12 +265,11 @@ def fwd_kvcache(
         q_input = q
 
         # modify kv_cache
-        if k is not None:
+        if k is not None and v is not None:
             update_cache_inplace(k_cache, k, cache_seqlens)
-            input_metadata.new_kv = True
-        if v is not None:
             update_cache_inplace(v_cache, v, cache_seqlens)
             input_metadata.new_kv = True
+            input_metadata.seqlen_new = k.shape[1]
 
         k_input = k_cache
         v_input = v_cache

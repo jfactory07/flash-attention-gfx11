@@ -1909,7 +1909,7 @@ def test_flash_attn_splitkv(
 # @pytest.mark.parametrize("mha_type", ["mha", "mqa", "gqa"]) # works. Issue with gqa if head is not good factor
 # @pytest.mark.parametrize("mha_type", ["mha", "mqa"])
 @pytest.mark.parametrize("mha_type", ["mha"])
-@pytest.mark.parametrize("new_kv", [False, True]) # broken
+@pytest.mark.parametrize("new_kv", [False, True]) # works
 # @pytest.mark.parametrize("new_kv", [False])
 # @pytest.mark.parametrize("alibi", [False, True]) # works
 @pytest.mark.parametrize("alibi", [False])
@@ -1944,10 +1944,11 @@ def test_flash_attn_splitkv(
         # (1, 1),
         # (1, 2),
         # (1, 4),
-        (1, 8),
+        # (1, 8),
+        (2, 4),
+        # (8, 8),
         # (1, 128),
         # (1, 339),
-        # (2, 4),
         # (3, 1024),
         # (64, 800),
         # (64, 256),
@@ -2059,8 +2060,12 @@ def test_flash_attn_kvcache(
         dtype=torch.int32,
         device=device,
     )
+    print("cache_seqlens:", cache_seqlens)
     arange = rearrange(torch.arange(seqlen_k, device=device), "s -> 1 s")
+    print("arange:", arange)
     cache_seqlens_expanded = rearrange(cache_seqlens, "b -> b 1")
+    print("cache_seqlens_expanded:", cache_seqlens_expanded)
+    print("seqlen_new:", seqlen_new)
     key_padding_mask = arange < cache_seqlens_expanded + (seqlen_new if new_kv else 0)
     if DEBUG_KVCACHE:
         print("key_padding_mask:", key_padding_mask)
@@ -2220,8 +2225,9 @@ def test_flash_attn_kvcache(
             # print("k:", k, k.shape)
             # print("k_cache:", k_cache, k_cache.shape)
             # print("k_cache_rep", k_cache_rep, k_cache_rep.shape)
-            print("k_cache_select:", k_cache_select, k_cache_select.shape)
-            print("k_cache_ref:", k_cache_ref, k_cache_ref.shape)
+            # print("k_cache_select:", k_cache_select, k_cache_select.shape)
+            # print("k_cache_ref:", k_cache_ref, k_cache_ref.shape)
+            pass
             
         # assert torch.allclose(k_cache, k_cache_select, rtol=1e-3, atol=1e-3)
         # assert torch.allclose(k_cache, k_cache_ref, rtol=1e-3, atol=1e-3)
