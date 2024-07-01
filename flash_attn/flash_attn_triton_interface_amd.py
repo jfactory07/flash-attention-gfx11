@@ -263,8 +263,26 @@ def fwd_kvcache(
         input_metadata = MetaData(sm_scale=softmax_scale)
 
         q_input = q
+        
+        # paged attention
+        if block_table is not None:
+            num_blocks = block_table.size(1)
+            block_size = k_cache.size(1)
+            batch_size, seqlen_k, nheads_k, d = q.shape[0], k_cache.shape[-3], k_cache.shape[-2], k_cache.shape[-1]
+            
+            # Flatten and index the paged caches
+            k_cache_flat = k_cache.view(-1, block_size, nheads_k, d)
+            v_cache_flat = v_cache.view(-1, block_size, nheads_k, d)
+            
+            # Use block_table to select the correct blocks
+            k_cache_selected = k_cache_flat[block_table.long()]
+            v_cache_selected = v_cache_flat[block_table.long()]
+            
+            # Reshape to the desired output format
+            k_cache = k_cache_selected.view(batch_size, -1, nheads_k, d)[:, :seqlen_k]
+            v_cache = v_cache_selected.view(batch_size, -1, nheads_k, d)[:, :seqlen_k]
 
-        # modify kv_cache
+        # new kv
         if k is not None and v is not None:
             update_cache_inplace(k_cache, k, cache_seqlens)
             update_cache_inplace(v_cache, v, cache_seqlens)

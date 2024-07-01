@@ -1926,9 +1926,10 @@ def test_flash_attn_splitkv(
 @pytest.mark.parametrize("rotary_interleaved", [False])
 # @pytest.mark.parametrize("rotary_fraction", [0.0, 0.5, 1.0]) # broken. Runs when new_kv is True otherwise is skipped
 @pytest.mark.parametrize("rotary_fraction", [0.0])
-# @pytest.mark.parametrize("paged_kv_block_size", [None, 256]) # broken when values is 256
+@pytest.mark.parametrize("paged_kv_block_size", [None, 256]) # works by unpageing cache
 # @pytest.mark.parametrize("paged_kv_block_size", [256, 512])
-@pytest.mark.parametrize("paged_kv_block_size", [256])
+# @pytest.mark.parametrize("paged_kv_block_size", [256])
+# @pytest.mark.parametrize("paged_kv_block_size", [4])
 # @pytest.mark.parametrize("paged_kv_block_size", [None])
 # @pytest.mark.parametrize("has_batch_idx", [False, True]) # broken
 @pytest.mark.parametrize("has_batch_idx", [False])
@@ -1943,22 +1944,22 @@ def test_flash_attn_splitkv(
     "seqlen_q,seqlen_k",
     [   
         # (1, 1),
-        (1, 2),
+        # (1, 2),
         # (1, 4),
         # (1, 8),
         # (2, 4),
         # (8, 8),
-        # (1, 128),
-        # (1, 339),
-        # (3, 1024),
-        # (64, 800),
-        # (64, 256),
-        # (3, 799),
-        # (64, 2048),
-        # (16, 20000),
-        # (1, 128 * 1024),
-        # (16, 128 * 1024),
-        # (128, 128),
+        (1, 128),
+        (1, 339),
+        (3, 1024),
+        (64, 800),
+        (64, 256),
+        (3, 799),
+        (64, 2048),
+        (16, 20000),
+        (1, 128 * 1024),
+        (16, 128 * 1024),
+        (128, 128),
     ],
 )
 # @pytest.mark.parametrize('seqlen_q,seqlen_k', [(256, 128)])
@@ -2051,6 +2052,11 @@ def test_flash_attn_kvcache(
         ) = _generate_block_kvcache(
             seqlen_k, paged_kv_block_size, batch_size, nheads_k, d, device, dtype
         )
+        print("k_cache:", k_cache, k_cache.shape)
+        print("v_cache:", v_cache, v_cache.shape)
+        print("block_table:", block_table, block_table.shape)
+        print("k_cache_paged:", k_cache_paged, k_cache_paged.shape)
+        print("v_cache_paged:", v_cache_paged, v_cache_paged.shape)
     cache_seqlens = torch.randint(
         0 if new_kv else 1,
         # If we don't use seqlen_q in the case of causal and rotary, cos/sin won't be long enough
