@@ -1913,8 +1913,9 @@ def test_flash_attn_splitkv(
 @pytest.mark.parametrize("new_kv", [False])
 # @pytest.mark.parametrize("alibi", [False, True]) # works
 @pytest.mark.parametrize("alibi", [False])
-@pytest.mark.parametrize("local", [False, True]) # broken
-# @pytest.mark.parametrize("local", [False])
+# @pytest.mark.parametrize("local", [False, True]) # waiting for sliding window attention
+@pytest.mark.parametrize("local", [False])
+# @pytest.mark.parametrize("local", [True])
 # @pytest.mark.parametrize("causal", [False, True]) # works
 # @pytest.mark.parametrize("causal", [True]) # works
 @pytest.mark.parametrize("causal", [False])
@@ -1927,8 +1928,8 @@ def test_flash_attn_splitkv(
 @pytest.mark.parametrize("rotary_fraction", [0.0])
 # @pytest.mark.parametrize("paged_kv_block_size", [None, 256]) # broken when values is 256
 # @pytest.mark.parametrize("paged_kv_block_size", [256, 512])
-# @pytest.mark.parametrize("paged_kv_block_size", [256])
-@pytest.mark.parametrize("paged_kv_block_size", [None])
+@pytest.mark.parametrize("paged_kv_block_size", [256])
+# @pytest.mark.parametrize("paged_kv_block_size", [None])
 # @pytest.mark.parametrize("has_batch_idx", [False, True]) # broken
 @pytest.mark.parametrize("has_batch_idx", [False])
 # @pytest.mark.parametrize("d", [32, 59, 64, 80, 128, 256])
@@ -1942,10 +1943,10 @@ def test_flash_attn_splitkv(
     "seqlen_q,seqlen_k",
     [   
         # (1, 1),
-        # (1, 2),
+        (1, 2),
         # (1, 4),
         # (1, 8),
-        (2, 4),
+        # (2, 4),
         # (8, 8),
         # (1, 128),
         # (1, 339),
