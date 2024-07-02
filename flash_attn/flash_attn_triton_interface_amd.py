@@ -4,7 +4,7 @@ from .flash_attn_triton_kernel_amd import MetaData, attention, get_shape_from_la
 from .flash_attn_triton_decode_amd import attention_inference
 
 DEBUG=False
-DEBUG_VARLEN=True
+DEBUG_VARLEN=False
 DEBUG_KVCACHE=True
 
 
@@ -148,46 +148,7 @@ def varlen_fwd(
 
     return tri_out, q , k , v, o, softmax_lse, softmax_p, torch.get_rng_state()
 
-
-def new_cache(cache, new_seq, cache_seqlens):
-    print("cache before:", cache)
-    print("new_seq:", new_seq)
-    print("cache_seqlens:", cache_seqlens)
-    
-    # Ensure cache and new_seq are 4D tensors
-    assert cache.dim() == 4 and new_seq.dim() == 4, "cache and new_seq should be 4D tensors (B, S, H, D)"
-    
-    # Ensure cache and new_seq have compatible dimensions
-    assert cache.shape[0] == new_seq.shape[0], "Batch sizes don't match"
-    assert cache.shape[2] == new_seq.shape[2], "Number of heads don't match"
-    assert cache.shape[3] == new_seq.shape[3], "Head dimensions don't match"
-    
-    batch_size, seqlen_k, nheads, d = cache.shape
-    seqlen_new = new_seq.shape[1]
-    
-    # Create a mask for updating
-    arange = torch.arange(seqlen_k, device=cache.device).unsqueeze(0)
-    cache_seqlens_expanded = cache_seqlens.unsqueeze(1)
-    update_mask = torch.logical_and(
-        cache_seqlens_expanded <= arange,
-        arange < cache_seqlens_expanded + seqlen_new
-    )
-    
-    # Create updated cache
-    updated_cache = cache.clone()
-    
-    # Update the cache with new_seq where the mask is True
-    updated_cache[update_mask] = new_seq.view(-1, nheads, d)
-    
-    print("cache after:", updated_cache)
-    return updated_cache
-
 def update_cache_inplace(cache, new_seq, cache_seqlens):
-    print("update_cache_inplace")
-    print("cache before:", cache)
-    print("new_seq:", new_seq)
-    print("cache_seqlens:", cache_seqlens)
-    
     # Ensure cache and new_seq are 4D tensors
     assert cache.dim() == 4 and new_seq.dim() == 4, "cache and new_seq should be 4D tensors (B, S, H, D)"
     
@@ -209,8 +170,6 @@ def update_cache_inplace(cache, new_seq, cache_seqlens):
     
     # Update the cache in-place with new_seq where the mask is True
     cache[update_mask] = new_seq.view(-1, nheads, d)
-    
-    print("cache after:", cache)
     return cache
 
 
@@ -265,25 +224,43 @@ def fwd_kvcache(
 
         # paged attention
         if block_table is not None:
-            num_blocks = block_table.size(1)
-            block_size = k_cache.size(1)
-            batch_size, seqlen_k, nheads_k, d = q.shape[0], k_cache.shape[-3], k_cache.shape[-2], k_cache.shape[-1]
+            print("k_cache_paged:", k_cache, k_cache.shape)
+            print("v_cache_paged:", v_cache, v_cache.shape)
             
-            # Flatten and index the paged caches
-            k_cache_flat = k_cache.view(-1, block_size, nheads_k, d)
-            v_cache_flat = v_cache.view(-1, block_size, nheads_k, d)
+            if True:
+                num_blocks = block_table.size(1)
+                block_size = k_cache.size(1)
+                batch_size, seqlen_k, nheads_k, d = q.shape[0], k_cache.shape[-3], k_cache.shape[-2], k_cache.shape[-1]
+                
+                # Flatten and index the paged caches
+                k_cache_flat = k_cache.view(-1, block_size, nheads_k, d)
+                v_cache_flat = v_cache.view(-1, block_size, nheads_k, d)
+                
+                # Use block_table to select the correct blocks
+                k_cache_selected = k_cache_flat[block_table.long()]
+                v_cache_selected = v_cache_flat[block_table.long()]
+                
+                # Reshape to the desired output format
+                k_cache_unpaged = k_cache_selected.view(batch_size, -1, nheads_k, d)[:, :seqlen_k, :, :]
+                v_cache_unpaged = v_cache_selected.view(batch_size, -1, nheads_k, d)[:, :seqlen_k, :, :]
+
+                if DEBUG_KVCACHE:
+                    print("k_cache_unpaged:", k_cache_unpaged, k_cache_unpaged.shape)
+                    print("v_cache_unpaged:", k_cache_unpaged, k_cache_unpaged.shape)
             
-            # Use block_table to select the correct blocks
-            k_cache_selected = k_cache_flat[block_table.long()]
-            v_cache_selected = v_cache_flat[block_table.long()]
-            
-            # Reshape to the desired output format
-            k_cache = k_cache_selected.view(batch_size, -1, nheads_k, d)[:, :seqlen_k]
-            v_cache = v_cache_selected.view(batch_size, -1, nheads_k, d)[:, :seqlen_k]
+                k_cache = k_cache_unpaged
+                v_cache = v_cache_unpaged
 
         # new kv
         if k is not None and v is not None:
+            if DEBUG_KVCACHE:
+                print("k_cache before:", k_cache)
+                print("k:", k)
+                print("cache_seqlens:", cache_seqlens)
             update_cache_inplace(k_cache, k, cache_seqlens)
+            if DEBUG_KVCACHE:
+                print("k_cache after:", k_cache)
+            
             update_cache_inplace(v_cache, v, cache_seqlens)
             input_metadata.new_kv = True
             input_metadata.seqlen_new = k.shape[1]

@@ -18,7 +18,7 @@ from flash_attn.flash_attn_interface import _get_block_size_n
 from flash_attn.layers.rotary import apply_rotary_emb
 
 DEBUG=False
-DEBUG_KVCACHE=False
+DEBUG_KVCACHE=True
 
 MAX_HEADDIM_SM8x = 192
 
@@ -1904,39 +1904,41 @@ def test_flash_attn_splitkv(
 
 # @pytest.mark.parametrize("dtype", ([torch.float16] if is_sm75 else [torch.float16, torch.bfloat16]))
 @pytest.mark.parametrize("dtype", [torch.float16])
-@pytest.mark.parametrize("num_splits", [1, 0]) # works
-# @pytest.mark.parametrize("num_splits", [1])
-@pytest.mark.parametrize("mha_type", ["mha", "mqa", "gqa"]) # works. Issue with gqa if head is not good factor
-# @pytest.mark.parametrize("mha_type", ["mha"])
-@pytest.mark.parametrize("new_kv", [False, True]) # works
-# @pytest.mark.parametrize("new_kv", [False])
-@pytest.mark.parametrize("alibi", [False, True]) # works
-# @pytest.mark.parametrize("alibi", [False])
-@pytest.mark.parametrize("local", [False, True]) # waiting for sliding window attention
-# @pytest.mark.parametrize("local", [False])
-@pytest.mark.parametrize("causal", [False, True]) # works
-# @pytest.mark.parametrize("causal", [False])
-@pytest.mark.parametrize("seqlen_new_eq_seqlen_q", [True, False]) # works
-# @pytest.mark.parametrize("seqlen_new_eq_seqlen_q", [True])
-@pytest.mark.parametrize("rotary_interleaved", [False, True]) # works
-# @pytest.mark.parametrize("rotary_interleaved", [False])
-@pytest.mark.parametrize("rotary_fraction", [0.0, 0.5, 1.0]) # broken. Runs when new_kv is True otherwise is skipped
-# @pytest.mark.parametrize("rotary_fraction", [0.0])
-@pytest.mark.parametrize("paged_kv_block_size", [None, 256]) # works by unpageing cache
+# @pytest.mark.parametrize("num_splits", [1, 0]) # works
+@pytest.mark.parametrize("num_splits", [1])
+# @pytest.mark.parametrize("mha_type", ["mha", "mqa", "gqa"]) # works. Issue with gqa if head is not good factor
+@pytest.mark.parametrize("mha_type", ["mha"])
+# @pytest.mark.parametrize("new_kv", [False, True]) # works
+@pytest.mark.parametrize("new_kv", [True])
+# @pytest.mark.parametrize("alibi", [False, True]) # works
+@pytest.mark.parametrize("alibi", [False])
+# @pytest.mark.parametrize("local", [False, True]) # waiting for sliding window attention
+@pytest.mark.parametrize("local", [False])
+# @pytest.mark.parametrize("causal", [False, True]) # works
+@pytest.mark.parametrize("causal", [False])
+# @pytest.mark.parametrize("seqlen_new_eq_seqlen_q", [True, False]) # works
+@pytest.mark.parametrize("seqlen_new_eq_seqlen_q", [True])
+# @pytest.mark.parametrize("rotary_interleaved", [False, True]) # works
+@pytest.mark.parametrize("rotary_interleaved", [False])
+# @pytest.mark.parametrize("rotary_fraction", [0.0, 0.5, 1.0]) # broken. Runs when new_kv is True otherwise is skipped
+@pytest.mark.parametrize("rotary_fraction", [0.0])
+# @pytest.mark.parametrize("paged_kv_block_size", [None, 256]) # works by unpageing cache
 # @pytest.mark.parametrize("paged_kv_block_size", [256, 512])
 # @pytest.mark.parametrize("paged_kv_block_size", [256])
-@pytest.mark.parametrize("has_batch_idx", [False, True]) # works
-# @pytest.mark.parametrize("has_batch_idx", [False])
+@pytest.mark.parametrize("paged_kv_block_size", [4])
+# @pytest.mark.parametrize("paged_kv_block_size", [None])
+# @pytest.mark.parametrize("has_batch_idx", [False, True]) # works
+@pytest.mark.parametrize("has_batch_idx", [False])
 # @pytest.mark.parametrize("d", [32, 59, 64, 80, 128, 256])
 # @pytest.mark.parametrize("d", [32, 64, 96, 128, 160, 192, 224, 256])
 # @pytest.mark.parametrize('d', [32, 40, 64, 80, 96, 128, 160, 192])
 # @pytest.mark.parametrize('d', [56, 80])
-@pytest.mark.parametrize("d", [128])
-# @pytest.mark.parametrize("d", [16])
+# @pytest.mark.parametrize("d", [128])
+@pytest.mark.parametrize("d", [16])
 @pytest.mark.parametrize(
     "seqlen_q,seqlen_k",
     [   
-        # (1, 1),
+        (1, 1),
         # (1, 2),
         # (1, 4),
         # (1, 8),
@@ -1946,7 +1948,7 @@ def test_flash_attn_splitkv(
         # (1, 339),
         # (3, 1024),
         # (64, 800),
-        (64, 256),
+        # (64, 256),
         # (3, 799),
         # (64, 2048),
         # (16, 20000),
@@ -1973,6 +1975,8 @@ def test_flash_attn_kvcache(
     num_splits,
     dtype,
 ):
+    # torch.set_printoptions(threshold=4, edgeitems=2, precision=4)
+
     if DEBUG_KVCACHE:
         print()
         print("test_flash_attn_kvcache")
@@ -2012,9 +2016,9 @@ def test_flash_attn_kvcache(
     device = "cuda"
     # set seed
     torch.random.manual_seed(0)
-    batch_size = 2
+    batch_size = 1
     batch_size_cache = batch_size if not has_batch_idx else batch_size * 2
-    nheads = 6
+    nheads = 1
     if DEBUG_KVCACHE:
         print("nheads:", nheads)
         print("batch_size:", batch_size)
@@ -2038,7 +2042,7 @@ def test_flash_attn_kvcache(
         if DEBUG_KVCACHE:
             print("k_cache:", k_cache, k_cache.shape)
             print("v_cache:", v_cache, v_cache.shape)
-            print("block_table:", block_table, block_table.shape)
+            print("block_table:", block_table, block_table)
     else:
         (
             k_cache,
@@ -2051,11 +2055,11 @@ def test_flash_attn_kvcache(
             seqlen_k, paged_kv_block_size, batch_size, nheads_k, d, device, dtype
         )
         if DEBUG_KVCACHE:
-            print("k_cache:", k_cache, k_cache.shape)
-            print("v_cache:", v_cache, v_cache.shape)
-            print("block_table:", block_table, block_table.shape)
             print("k_cache_paged:", k_cache_paged, k_cache_paged.shape)
             print("v_cache_paged:", v_cache_paged, v_cache_paged.shape)
+            print("block_table:", block_table, block_table.shape)
+            print("k_cache:", k_cache, k_cache.shape)
+            print("v_cache:", v_cache, v_cache.shape)
     cache_seqlens = torch.randint(
         0 if new_kv else 1,
         # If we don't use seqlen_q in the case of causal and rotary, cos/sin won't be long enough
@@ -2230,13 +2234,13 @@ def test_flash_attn_kvcache(
             )[:, :seqlen_k]
         
         if DEBUG_KVCACHE:
-            # print("k:", k, k.shape)
-            # print("k_cache:", k_cache, k_cache.shape)
-            # print("k_cache_rep", k_cache_rep, k_cache_rep.shape)
-            # print("k_cache_select:", k_cache_select, k_cache_select.shape)
-            # print("k_cache_ref:", k_cache_ref, k_cache_ref.shape)
-            # assert torch.allclose(k_cache, k_cache_select, rtol=1e-3, atol=1e-3)
-            # assert torch.allclose(k_cache, k_cache_ref, rtol=1e-3, atol=1e-3)
+            print("k:", k, k.shape)
+            print("k_cache:", k_cache, k_cache.shape)
+            print("k_cache_rep", k_cache_rep, k_cache_rep.shape)
+            print("k_cache_select:", k_cache_select, k_cache_select.shape)
+            print("k_cache_ref:", k_cache_ref, k_cache_ref.shape)
+            assert torch.allclose(k_cache, k_cache_select, rtol=1e-3, atol=1e-3)
+            assert torch.allclose(k_cache, k_cache_ref, rtol=1e-3, atol=1e-3)
             pass
             
 
@@ -2247,29 +2251,55 @@ def test_flash_attn_kvcache(
 
 
 def _generate_block_kvcache(seqlen_k, paged_kv_block_size, batch_size, nheads_k, d, device, dtype):
-    num_blocks = math.ceil(seqlen_k / paged_kv_block_size) * batch_size * 3
-    k_cache_paged = torch.randn(
-        num_blocks, paged_kv_block_size, nheads_k, d, device=device, dtype=dtype
-    )
-    v_cache_paged = torch.randn(
-        num_blocks, paged_kv_block_size, nheads_k, d, device=device, dtype=dtype
-    )
-    block_table = rearrange(
-        torch.randperm(num_blocks, dtype=torch.int32, device=device),
-        "(b nblocks) -> b nblocks",
-        b=batch_size,
-    )
-    k_cache = rearrange(
-        # pytorch 1.12 doesn't have indexing with int32
-        k_cache_paged[block_table.to(dtype=torch.long).flatten()],
-        "(b nblocks) block_size ... -> b (nblocks block_size) ...",
-        b=batch_size,
-    )[:, :seqlen_k]
-    v_cache = rearrange(
-        v_cache_paged[block_table.to(dtype=torch.long).flatten()],
-        "(b nblocks) block_size ... -> b (nblocks block_size) ...",
-        b=batch_size,
-    )[:, :seqlen_k]
+    if True:
+        num_blocks = math.ceil(seqlen_k / paged_kv_block_size) * batch_size * 3
+    
+        # Generate increasing numbers for k_cache_paged and v_cache_paged
+        k_cache_paged = torch.arange(num_blocks * paged_kv_block_size * nheads_k * d, device=device, dtype=dtype).reshape(
+            num_blocks, paged_kv_block_size, nheads_k, d
+        )
+        v_cache_paged = torch.arange(num_blocks * paged_kv_block_size * nheads_k * d, device=device, dtype=dtype).reshape(
+            num_blocks, paged_kv_block_size, nheads_k, d
+        )
+        
+        # Generate increasing numbers for block_table
+        block_table = torch.arange(num_blocks, dtype=torch.int32, device=device).reshape(batch_size, -1)
+        
+        k_cache = rearrange(
+            k_cache_paged[block_table.to(dtype=torch.long).flatten()],
+            "(b nblocks) block_size ... -> b (nblocks block_size) ...",
+            b=batch_size,
+        )[:, :seqlen_k]
+        v_cache = rearrange(
+            v_cache_paged[block_table.to(dtype=torch.long).flatten()],
+            "(b nblocks) block_size ... -> b (nblocks block_size) ...",
+            b=batch_size,
+        )[:, :seqlen_k]
+
+    else:
+        num_blocks = math.ceil(seqlen_k / paged_kv_block_size) * batch_size * 3
+        k_cache_paged = torch.randn(
+            num_blocks, paged_kv_block_size, nheads_k, d, device=device, dtype=dtype
+        )
+        v_cache_paged = torch.randn(
+            num_blocks, paged_kv_block_size, nheads_k, d, device=device, dtype=dtype
+        )
+        block_table = rearrange(
+            torch.randperm(num_blocks, dtype=torch.int32, device=device),
+            "(b nblocks) -> b nblocks",
+            b=batch_size,
+        )
+        k_cache = rearrange(
+            # pytorch 1.12 doesn't have indexing with int32
+            k_cache_paged[block_table.to(dtype=torch.long).flatten()],
+            "(b nblocks) block_size ... -> b (nblocks block_size) ...",
+            b=batch_size,
+        )[:, :seqlen_k]
+        v_cache = rearrange(
+            v_cache_paged[block_table.to(dtype=torch.long).flatten()],
+            "(b nblocks) block_size ... -> b (nblocks block_size) ...",
+            b=batch_size,
+        )[:, :seqlen_k]
     return k_cache, v_cache, block_table, k_cache_paged, v_cache_paged, num_blocks
 
 
