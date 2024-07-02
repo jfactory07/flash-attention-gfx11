@@ -1926,20 +1926,20 @@ def test_flash_attn_splitkv(
 @pytest.mark.parametrize("rotary_interleaved", [False])
 # @pytest.mark.parametrize("rotary_fraction", [0.0, 0.5, 1.0]) # broken. Runs when new_kv is True otherwise is skipped
 @pytest.mark.parametrize("rotary_fraction", [0.0])
-@pytest.mark.parametrize("paged_kv_block_size", [None, 256]) # works by unpageing cache
+# @pytest.mark.parametrize("paged_kv_block_size", [None, 256]) # works by unpageing cache
 # @pytest.mark.parametrize("paged_kv_block_size", [256, 512])
 # @pytest.mark.parametrize("paged_kv_block_size", [256])
 # @pytest.mark.parametrize("paged_kv_block_size", [4])
-# @pytest.mark.parametrize("paged_kv_block_size", [None])
-# @pytest.mark.parametrize("has_batch_idx", [False, True]) # broken
-@pytest.mark.parametrize("has_batch_idx", [False])
-# @pytest.mark.parametrize("d", [32, 59, 64, 80, 128, 256])
+@pytest.mark.parametrize("paged_kv_block_size", [None])
+@pytest.mark.parametrize("has_batch_idx", [False, True]) # works
+# @pytest.mark.parametrize("has_batch_idx", [False])
+@pytest.mark.parametrize("d", [32, 59, 64, 80, 128, 256])
 # @pytest.mark.parametrize("d", [32, 64, 96, 128, 160, 192, 224, 256])
 # @pytest.mark.parametrize('d', [32, 40, 64, 80, 96, 128, 160, 192])
 # @pytest.mark.parametrize('d', [56, 80])
 # @pytest.mark.parametrize("d", [128])
 # @pytest.mark.parametrize("d", [32])
-@pytest.mark.parametrize("d", [16])
+# @pytest.mark.parametrize("d", [16])
 @pytest.mark.parametrize(
     "seqlen_q,seqlen_k",
     [   
@@ -2000,9 +2000,12 @@ def test_flash_attn_kvcache(
         print("dtype:",  dtype)
 
     if is_hip():
-        # if alibi == True:
-        #     pytest.skip("Alibi not supported with varlen in HIP")
+        if local == True:
+            pytest.skip("local sliding window attention not supported in HIP")
         
+        if rotary_interleaved == True or rotary_fraction > 0.0:
+            pytest.skip("rotatary embedding not supported in HIP")
+
         # skip all cases where seqlen_q, seqlen_k, or d are not powers of 2
         if not (is_power_of_2(seqlen_q) and is_power_of_2(seqlen_k) and is_power_of_2(d)):
             pytest.skip("seqlen_q, seqlen_k, or d are not powers of 2")
@@ -2082,6 +2085,8 @@ def test_flash_attn_kvcache(
         ]
     else:
         cache_batch_idx = None
+    print("cache_batch_idx:", cache_batch_idx)
+
     if alibi:
         alibi_slopes = torch.rand(batch_size, nheads, device=device, dtype=torch.float32) * 0.3
         attn_bias = attn_bias_from_alibi_slopes(

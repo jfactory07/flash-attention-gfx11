@@ -260,10 +260,9 @@ def fwd_kvcache(
         out = torch.empty_like(q)
 
     if True:
+        q_input = q
         input_metadata = MetaData(sm_scale=softmax_scale)
 
-        q_input = q
-        
         # paged attention
         if block_table is not None:
             num_blocks = block_table.size(1)
@@ -289,9 +288,15 @@ def fwd_kvcache(
             input_metadata.new_kv = True
             input_metadata.seqlen_new = k.shape[1]
 
-        k_input = k_cache
-        v_input = v_cache
 
+        if cache_batch_idx is not None:
+            k_input = k_cache[cache_batch_idx,:,:,:]
+            v_input = v_cache[cache_batch_idx,:,:,:]
+        else:
+            k_input = k_cache
+            v_input = v_cache
+
+        # set metadata
         seqlen_q = q_input.shape[1]
         seqlen_k = k_input.shape[1]
         input_metadata.max_seqlens_q = seqlen_q
