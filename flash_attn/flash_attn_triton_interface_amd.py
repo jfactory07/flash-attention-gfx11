@@ -148,7 +148,41 @@ def varlen_fwd(
 
     return tri_out, q , k , v, o, softmax_lse, softmax_p, torch.get_rng_state()
 
+def unpage(k_cache_paged, v_cache_paged, block_table, batch_size, seqlen_k):
+    # if DEBUG_KVCACHE:
+        # print("k_cache_paged:", k_cache, k_cache.shape)
+        # print("v_cache_paged:", v_cache, v_cache.shape)
+    
+    # dims
+    num_blocks, block_size, nheads_k, d  = k_cache_paged.shape
+    
+    
+    # Flatten and index the paged caches
+    k_cache_flat = k_cache_paged.view(-1, block_size, nheads_k, d)
+    v_cache_flat = v_cache_paged.view(-1, block_size, nheads_k, d)
+    
+    # Use block_table to select the correct blocks
+    k_cache_selected = k_cache_flat[block_table.long()]
+    v_cache_selected = v_cache_flat[block_table.long()]
+    
+    # Reshape to the desired output format
+    k_cache_unpaged = k_cache_selected.view(batch_size, -1, nheads_k, d)[:, :seqlen_k, :, :]
+    v_cache_unpaged = v_cache_selected.view(batch_size, -1, nheads_k, d)[:, :seqlen_k, :, :]
+
+    # if DEBUG_KVCACHE:
+    #     print("k_cache_unpaged:", k_cache_unpaged, k_cache_unpaged.shape)
+    #     print("v_cache_unpaged:", k_cache_unpaged, k_cache_unpaged.shape)
+
+    return k_cache_unpaged, v_cache_unpaged
+
+
+
 def update_cache_inplace(cache, new_seq, cache_seqlens):
+    # if DEBUG_KVCACHE:
+    #     print("k_cache before:", k_cache)
+    #     print("k:", k)
+    #     print("cache_seqlens:", cache_seqlens)
+
     # Ensure cache and new_seq are 4D tensors
     assert cache.dim() == 4 and new_seq.dim() == 4, "cache and new_seq should be 4D tensors (B, S, H, D)"
     
@@ -170,7 +204,15 @@ def update_cache_inplace(cache, new_seq, cache_seqlens):
     
     # Update the cache in-place with new_seq where the mask is True
     cache[update_mask] = new_seq.view(-1, nheads, d)
-    return cache
+
+    # if DEBUG_KVCACHE:
+    #     print("k_cache after:", k_cache)
+    return
+
+def updated_paged_cache_inplace(paged_cache, new_seq, cache_seqlens):
+    # TODO: write this function
+    
+    return
 
 
 def fwd_kvcache(
@@ -222,48 +264,24 @@ def fwd_kvcache(
         q_input = q
         input_metadata = MetaData(sm_scale=softmax_scale)
 
-        # paged attention
-        if block_table is not None:
-            print("k_cache_paged:", k_cache, k_cache.shape)
-            print("v_cache_paged:", v_cache, v_cache.shape)
-            
-            if True:
-                num_blocks = block_table.size(1)
-                block_size = k_cache.size(1)
-                batch_size, seqlen_k, nheads_k, d = q.shape[0], k_cache.shape[-3], k_cache.shape[-2], k_cache.shape[-1]
-                
-                # Flatten and index the paged caches
-                k_cache_flat = k_cache.view(-1, block_size, nheads_k, d)
-                v_cache_flat = v_cache.view(-1, block_size, nheads_k, d)
-                
-                # Use block_table to select the correct blocks
-                k_cache_selected = k_cache_flat[block_table.long()]
-                v_cache_selected = v_cache_flat[block_table.long()]
-                
-                # Reshape to the desired output format
-                k_cache_unpaged = k_cache_selected.view(batch_size, -1, nheads_k, d)[:, :seqlen_k, :, :]
-                v_cache_unpaged = v_cache_selected.view(batch_size, -1, nheads_k, d)[:, :seqlen_k, :, :]
-
-                if DEBUG_KVCACHE:
-                    print("k_cache_unpaged:", k_cache_unpaged, k_cache_unpaged.shape)
-                    print("v_cache_unpaged:", k_cache_unpaged, k_cache_unpaged.shape)
-            
-                k_cache = k_cache_unpaged
-                v_cache = v_cache_unpaged
 
         # new kv
         if k is not None and v is not None:
-            if DEBUG_KVCACHE:
-                print("k_cache before:", k_cache)
-                print("k:", k)
-                print("cache_seqlens:", cache_seqlens)
-            update_cache_inplace(k_cache, k, cache_seqlens)
-            if DEBUG_KVCACHE:
-                print("k_cache after:", k_cache)
+            if block_table is not None:
+                updated_paged_cache_inplace(k_cache, k, cache_seqlens)
+                updated_paged_cache_inplace(v_cache, v, cache_seqlens)
+            else:
+                update_cache_inplace(k_cache, k, cache_seqlens)
+                update_cache_inplace(v_cache, v, cache_seqlens)
             
-            update_cache_inplace(v_cache, v, cache_seqlens)
+            # fill metadata
             input_metadata.new_kv = True
             input_metadata.seqlen_new = k.shape[1]
+
+
+        # paged attention
+        # if block_table is not None:
+        #     k_cache, v_cache = unpage(k_cache, v_cache, block_table, q.shape[0], 2)
 
 
         if cache_batch_idx is not None:
