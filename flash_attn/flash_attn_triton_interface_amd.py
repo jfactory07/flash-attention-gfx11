@@ -148,32 +148,6 @@ def varlen_fwd(
 
     return tri_out, q , k , v, o, softmax_lse, softmax_p, torch.get_rng_state()
 
-def unpage(k_cache_paged, v_cache_paged, block_table, batch_size, seqlen_k):
-    # if DEBUG_KVCACHE:
-        # print("k_cache_paged:", k_cache, k_cache.shape)
-        # print("v_cache_paged:", v_cache, v_cache.shape)
-    
-    # dims
-    num_blocks, block_size, nheads_k, d  = k_cache_paged.shape
-    
-    
-    # Flatten and index the paged caches
-    k_cache_flat = k_cache_paged.view(-1, block_size, nheads_k, d)
-    v_cache_flat = v_cache_paged.view(-1, block_size, nheads_k, d)
-    
-    # Use block_table to select the correct blocks
-    k_cache_selected = k_cache_flat[block_table.long()]
-    v_cache_selected = v_cache_flat[block_table.long()]
-    
-    # Reshape to the desired output format
-    k_cache_unpaged = k_cache_selected.view(batch_size, -1, nheads_k, d)[:, :seqlen_k, :, :]
-    v_cache_unpaged = v_cache_selected.view(batch_size, -1, nheads_k, d)[:, :seqlen_k, :, :]
-
-    # if DEBUG_KVCACHE:
-    #     print("k_cache_unpaged:", k_cache_unpaged, k_cache_unpaged.shape)
-    #     print("v_cache_unpaged:", k_cache_unpaged, k_cache_unpaged.shape)
-
-    return k_cache_unpaged, v_cache_unpaged
 
 
 
@@ -209,9 +183,38 @@ def update_cache_inplace(cache, new_seq, cache_seqlens):
     #     print("k_cache after:", k_cache)
     return
 
-def updated_paged_cache_inplace(paged_cache, new_seq, cache_seqlens):
-    # TODO: write this function
-    
+def updated_paged_cache_inplace(paged_cache, new_seq, cache_seqlens, block_table):
+    # dims
+    block_size = paged_cache.shape[1]
+    batch_size, seqlen_new, nheads, d = new_seq.shape
+
+    if DEBUG_KVCACHE:
+        print("block_size:", block_size)
+        print("batch_size:", batch_size)
+        print("seqlen_new:", seqlen_new)
+        print("nheads:", nheads)
+        print("d:", d)
+
+    for i in range(batch_size):
+        # Calculate which blocks need updating for this batch
+        start_block = cache_seqlens[i] // block_size
+        end_block = (cache_seqlens[i] + seqlen_new - 1) // block_size
+        
+        for block_idx in range(start_block, end_block + 1):
+            # Get the actual block index from the block table
+            actual_block_idx = block_table[i, block_idx]
+            
+            # Calculate the start and end positions within this block
+            start_pos = max(0, cache_seqlens[i] - block_idx * block_size)
+            end_pos = min(block_size, cache_seqlens[i] + seqlen_new - block_idx * block_size)
+            
+            # Calculate the corresponding indices in new_seq
+            new_seq_start = max(0, block_idx * block_size - cache_seqlens[i])
+            new_seq_end = new_seq_start + (end_pos - start_pos)
+            
+            # Update the paged cache
+            paged_cache[actual_block_idx, start_pos:end_pos] = new_seq[i, new_seq_start:new_seq_end]
+
     return
 
 
@@ -268,8 +271,8 @@ def fwd_kvcache(
         # new kv
         if k is not None and v is not None:
             if block_table is not None:
-                updated_paged_cache_inplace(k_cache, k, cache_seqlens)
-                updated_paged_cache_inplace(v_cache, v, cache_seqlens)
+                updated_paged_cache_inplace(k_cache, k, cache_seqlens, block_table)
+                updated_paged_cache_inplace(v_cache, v, cache_seqlens, block_table)
             else:
                 update_cache_inplace(k_cache, k, cache_seqlens)
                 update_cache_inplace(v_cache, v, cache_seqlens)
@@ -277,11 +280,6 @@ def fwd_kvcache(
             # fill metadata
             input_metadata.new_kv = True
             input_metadata.seqlen_new = k.shape[1]
-
-
-        # paged attention
-        # if block_table is not None:
-        #     k_cache, v_cache = unpage(k_cache, v_cache, block_table, q.shape[0], 2)
 
 
         if cache_batch_idx is not None:
