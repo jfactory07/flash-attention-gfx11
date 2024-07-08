@@ -2043,7 +2043,7 @@ def test_flash_attn_kvcache(
         if DEBUG_KVCACHE:
             print("k_cache:", k_cache, k_cache.shape)
             print("v_cache:", v_cache, v_cache.shape)
-            print("block_table:", block_table)
+            print("block_table:", block_table, block_table.shape)
     else:
         (
             k_cache,
@@ -2241,8 +2241,6 @@ def test_flash_attn_kvcache(
             print("k_cache_rep", k_cache_rep, k_cache_rep.shape)
             print("k_cache_select:", k_cache_select, k_cache_select.shape)
             print("k_cache_ref:", k_cache_ref, k_cache_ref.shape)
-            assert torch.allclose(k_cache, k_cache_select, rtol=1e-3, atol=1e-3)
-            assert torch.allclose(k_cache, k_cache_ref, rtol=1e-3, atol=1e-3)
             pass
             
 

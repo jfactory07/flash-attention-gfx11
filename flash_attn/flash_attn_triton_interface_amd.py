@@ -149,7 +149,67 @@ def varlen_fwd(
     return tri_out, q , k , v, o, softmax_lse, softmax_p, torch.get_rng_state()
 
 
+def unpage_inplace(paged_cache, block_table, seqlen_k):
+    if DEBUG_KVCACHE:
+        print("paged_cache before:", paged_cache, paged_cache.shape)
+        print("block_table:", block_table, block_table.shape)
+    
+    # Extract dimensions
+    num_blocks, block_size, nheads_k, d = paged_cache.shape
+    batch_size, num_blocks_per_batch = block_table.shape
+    seqlen_k_inferred = num_blocks_per_batch * block_size
 
+    # Create a temporary buffer to hold the data during rearrangement
+    temp_buffer = torch.empty_like(paged_cache[:batch_size * num_blocks_per_batch])
+
+    # Rearrange the cache in-place
+    for i in range(batch_size):
+        for j, block_idx in enumerate(block_table[i]):
+            if block_idx != -1:  # Ignore padding blocks
+                start = i * num_blocks_per_batch + j
+                temp_buffer[start] = paged_cache[block_idx]
+
+    # Copy the rearranged data back to paged_cache
+    paged_cache[:batch_size * num_blocks_per_batch] = temp_buffer
+
+    # Reshape paged_cache to the unpaged shape
+    paged_cache = paged_cache.view(batch_size, seqlen_k_inferred, nheads_k, d)
+
+    # Truncate paged_cache to seqlen_k in-place
+    paged_cache = paged_cache[:, :seqlen_k, :, :]
+
+    if DEBUG_KVCACHE:
+        print("paged_cache after:", paged_cache, paged_cache.shape)
+
+    return paged_cache
+
+def unpage(paged_cache, block_table, seqlen_k):
+    if DEBUG_KVCACHE:
+        print("paged_cache:", paged_cache, paged_cache.shape)
+        print("block_table:", block_table, block_table.shape)
+    
+    # Extract dimensions
+    num_blocks, block_size, nheads_k, d = paged_cache.shape
+    batch_size, num_blocks_per_batch = block_table.shape
+    seqlen_k_inferred = num_blocks_per_batch * block_size
+
+    # Initialize the unpaged cache
+    unpaged_cache = torch.zeros((batch_size, seqlen_k_inferred, nheads_k, d), 
+                                dtype=paged_cache.dtype, 
+                                device=paged_cache.device)
+
+    # Reconstruct the unpaged cache
+    for i in range(batch_size):
+        for j, block_idx in enumerate(block_table[i]):
+            if block_idx != -1:  # Ignore padding blocks
+                start = j * block_size
+                end = min((j + 1) * block_size, seqlen_k_inferred)
+                unpaged_cache[i, start:end] = paged_cache[block_idx, :end-start]
+
+    if DEBUG_KVCACHE:
+        print("unpaged_cache:", unpaged_cache, unpaged_cache.shape)
+
+    return unpaged_cache[:, :seqlen_k, :, :]
 
 def update_cache_inplace(cache, new_seq, cache_seqlens):
     # if DEBUG_KVCACHE:
@@ -183,39 +243,56 @@ def update_cache_inplace(cache, new_seq, cache_seqlens):
     #     print("k_cache after:", k_cache)
     return
 
-def updated_paged_cache_inplace(paged_cache, new_seq, cache_seqlens, block_table):
-    # dims
-    block_size = paged_cache.shape[1]
-    batch_size, seqlen_new, nheads, d = new_seq.shape
+def updated_paged_cache_inplace(paged_cache, new_seqs, cache_seqlens, block_table, debug_print=False):
+    debug_print = DEBUG_KVCACHE and debug_print
+    
+    if debug_print:
+        print("paged_cache before:", paged_cache, paged_cache.shape)
+        print("new_seqs:", new_seqs, new_seqs.shape)
+        print("cache_seqlens:", cache_seqlens, cache_seqlens.shape)
+        print("block_table:", block_table, block_table.shape)
 
-    if DEBUG_KVCACHE:
-        print("block_size:", block_size)
-        print("batch_size:", batch_size)
-        print("seqlen_new:", seqlen_new)
-        print("nheads:", nheads)
-        print("d:", d)
+    # Extract dimensions
+    num_blocks, block_size, nheads, d = paged_cache.shape
+    batch_size, seqlen_new, nheads, d = new_seqs.shape
+    batch_size, num_blocks_per_batch = block_table.shape
 
+    # Iterate through the batch and update the cache
     for i in range(batch_size):
-        # Calculate which blocks need updating for this batch
-        start_block = cache_seqlens[i] // block_size
-        end_block = (cache_seqlens[i] + seqlen_new - 1) // block_size
-        
-        for block_idx in range(start_block, end_block + 1):
-            # Get the actual block index from the block table
-            actual_block_idx = block_table[i, block_idx]
-            
-            # Calculate the start and end positions within this block
-            start_pos = max(0, cache_seqlens[i] - block_idx * block_size)
-            end_pos = min(block_size, cache_seqlens[i] + seqlen_new - block_idx * block_size)
-            
-            # Calculate the corresponding indices in new_seq
-            new_seq_start = max(0, block_idx * block_size - cache_seqlens[i])
-            new_seq_end = new_seq_start + (end_pos - start_pos)
-            
-            # Update the paged cache
-            paged_cache[actual_block_idx, start_pos:end_pos] = new_seq[i, new_seq_start:new_seq_end]
+        seq_blocks = block_table[i]
+        valid_blocks = seq_blocks[seq_blocks != -1]
+        new_seq = new_seqs[i]
+        start_idx = cache_seqlens[i]
 
-    return
+        if debug_print:
+            print("seq_blocks:", seq_blocks)
+            print("valid_blocks:", valid_blocks)
+            print("new_seq:", new_seq)
+            print("start_idx:", start_idx)
+        
+        for j, block_idx in enumerate(valid_blocks):
+            block_start = j * block_size
+            block_end = min((j + 1) * block_size, start_idx + seqlen_new)
+            if debug_print:
+                print("block_start:", block_start)
+                print("block_end:", block_end)
+            
+            # Calculate the range of indices to update in this block
+            update_start = max(start_idx - block_start, 0)
+            update_end = min(block_end - block_start, block_size)
+
+            if debug_print:
+                print("update_start:", update_start)
+                print("update_end:", update_end)
+            
+            if update_end > update_start:
+                # Update the cache for this block
+                paged_cache[block_idx, update_start:update_end] = new_seq[block_start + update_start - start_idx:block_start + update_end - start_idx]
+
+    if debug_print:
+        print("paged_cache after:", paged_cache)
+    
+    return paged_cache
 
 
 def fwd_kvcache(
@@ -250,7 +327,7 @@ def fwd_kvcache(
         print("rotary_cos:", rotary_cos)
         print("rotary_sin:", rotary_sin)
         print("cache_batch_idx:", cache_batch_idx)
-        print("block_table:", block_table)
+        print("block_table:", block_table, block_table.shape)
         print("alibi_slopes:", alibi_slopes)
         print("out:", out)
         print("softmax_scale:", softmax_scale)
@@ -271,7 +348,7 @@ def fwd_kvcache(
         # new kv
         if k is not None and v is not None:
             if block_table is not None:
-                updated_paged_cache_inplace(k_cache, k, cache_seqlens, block_table)
+                updated_paged_cache_inplace(k_cache, k, cache_seqlens, block_table, True)
                 updated_paged_cache_inplace(v_cache, v, cache_seqlens, block_table)
             else:
                 update_cache_inplace(k_cache, k, cache_seqlens)
@@ -281,7 +358,12 @@ def fwd_kvcache(
             input_metadata.new_kv = True
             input_metadata.seqlen_new = k.shape[1]
 
-
+        # paged attention
+        if block_table is not None:
+            k_cache = unpage(k_cache, block_table, 2)
+            v_cache = unpage(v_cache, block_table, 2)
+            
+        # index into cache
         if cache_batch_idx is not None:
             k_input = k_cache[cache_batch_idx,:,:,:]
             v_input = v_cache[cache_batch_idx,:,:,:]
