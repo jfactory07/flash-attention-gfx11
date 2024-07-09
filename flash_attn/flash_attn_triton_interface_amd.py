@@ -327,7 +327,7 @@ def fwd_kvcache(
         print("rotary_cos:", rotary_cos)
         print("rotary_sin:", rotary_sin)
         print("cache_batch_idx:", cache_batch_idx)
-        print("block_table:", block_table, block_table.shape)
+        print("block_table:", block_table, block_table.shape if block_table is not None else None)
         print("alibi_slopes:", alibi_slopes)
         print("out:", out)
         print("softmax_scale:", softmax_scale)
@@ -348,7 +348,7 @@ def fwd_kvcache(
         # new kv
         if k is not None and v is not None:
             if block_table is not None:
-                updated_paged_cache_inplace(k_cache, k, cache_seqlens, block_table, True)
+                updated_paged_cache_inplace(k_cache, k, cache_seqlens, block_table)
                 updated_paged_cache_inplace(v_cache, v, cache_seqlens, block_table)
             else:
                 update_cache_inplace(k_cache, k, cache_seqlens)
@@ -360,8 +360,9 @@ def fwd_kvcache(
 
         # paged attention
         if block_table is not None:
-            k_cache = unpage(k_cache, block_table, 2)
-            v_cache = unpage(v_cache, block_table, 2)
+            unpage_seqlen_k = max(cache_seqlens) + 1 # infer the seqlen_k if paged cache
+            k_cache = unpage(k_cache, block_table, unpage_seqlen_k)
+            v_cache = unpage(v_cache, block_table, unpage_seqlen_k)
             
         # index into cache
         if cache_batch_idx is not None:

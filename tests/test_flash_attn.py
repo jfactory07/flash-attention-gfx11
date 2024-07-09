@@ -1904,29 +1904,29 @@ def test_flash_attn_splitkv(
 
 # @pytest.mark.parametrize("dtype", ([torch.float16] if is_sm75 else [torch.float16, torch.bfloat16]))
 @pytest.mark.parametrize("dtype", [torch.float16])
-# @pytest.mark.parametrize("num_splits", [1, 0]) # works
-@pytest.mark.parametrize("num_splits", [1])
-# @pytest.mark.parametrize("mha_type", ["mha", "mqa", "gqa"]) # works. Issue with gqa if head is not good factor
-@pytest.mark.parametrize("mha_type", ["mha"])
-# @pytest.mark.parametrize("new_kv", [False, True]) # works
-@pytest.mark.parametrize("new_kv", [True])
-# @pytest.mark.parametrize("alibi", [False, True]) # works
-@pytest.mark.parametrize("alibi", [False])
-# @pytest.mark.parametrize("local", [False, True]) # waiting for sliding window attention
-@pytest.mark.parametrize("local", [False])
-# @pytest.mark.parametrize("causal", [False, True]) # works
-@pytest.mark.parametrize("causal", [False])
-# @pytest.mark.parametrize("seqlen_new_eq_seqlen_q", [True, False]) # works
-@pytest.mark.parametrize("seqlen_new_eq_seqlen_q", [True])
-# @pytest.mark.parametrize("rotary_interleaved", [False, True]) # works
-@pytest.mark.parametrize("rotary_interleaved", [False])
-# @pytest.mark.parametrize("rotary_fraction", [0.0, 0.5, 1.0]) # broken. Runs when new_kv is True otherwise is skipped
-@pytest.mark.parametrize("rotary_fraction", [0.0])
-# @pytest.mark.parametrize("paged_kv_block_size", [None, 256]) # works by unpageing cache
+@pytest.mark.parametrize("num_splits", [1, 0]) # works
+# @pytest.mark.parametrize("num_splits", [1])
+@pytest.mark.parametrize("mha_type", ["mha", "mqa", "gqa"]) # works. Issue with gqa if head is not good factor
+# @pytest.mark.parametrize("mha_type", ["mha"])
+@pytest.mark.parametrize("new_kv", [False, True]) # works
+# @pytest.mark.parametrize("new_kv", [True])
+@pytest.mark.parametrize("alibi", [False, True]) # works
+# @pytest.mark.parametrize("alibi", [False])
+@pytest.mark.parametrize("local", [False, True]) # waiting for sliding window attention
+# @pytest.mark.parametrize("local", [False])
+@pytest.mark.parametrize("causal", [False, True]) # works
+# @pytest.mark.parametrize("causal", [False])
+@pytest.mark.parametrize("seqlen_new_eq_seqlen_q", [True, False]) # works
+# @pytest.mark.parametrize("seqlen_new_eq_seqlen_q", [True])
+@pytest.mark.parametrize("rotary_interleaved", [False, True]) # works
+# @pytest.mark.parametrize("rotary_interleaved", [False])
+@pytest.mark.parametrize("rotary_fraction", [0.0, 0.5, 1.0]) # broken. Runs when new_kv is True otherwise is skipped
+# @pytest.mark.parametrize("rotary_fraction", [0.0])
+@pytest.mark.parametrize("paged_kv_block_size", [None, 256]) # works by unpageing cache
 # @pytest.mark.parametrize("paged_kv_block_size", [256, 512])
 # @pytest.mark.parametrize("paged_kv_block_size", [256])
 # @pytest.mark.parametrize("paged_kv_block_size", [256])
-@pytest.mark.parametrize("paged_kv_block_size", [8])
+# @pytest.mark.parametrize("paged_kv_block_size", [8])
 # @pytest.mark.parametrize("paged_kv_block_size", [None])
 # @pytest.mark.parametrize("has_batch_idx", [False, True]) # works
 @pytest.mark.parametrize("has_batch_idx", [False])
@@ -1934,13 +1934,14 @@ def test_flash_attn_splitkv(
 # @pytest.mark.parametrize("d", [32, 64, 96, 128, 160, 192, 224, 256])
 # @pytest.mark.parametrize('d', [32, 40, 64, 80, 96, 128, 160, 192])
 # @pytest.mark.parametrize('d', [56, 80])
+# @pytest.mark.parametrize("d", [256])
 # @pytest.mark.parametrize("d", [128])
 @pytest.mark.parametrize("d", [16])
 @pytest.mark.parametrize(
     "seqlen_q,seqlen_k",
     [   
         # (1, 1),
-        (1, 2),
+        # (1, 2),
         # (1, 4),
         # (1, 8),
         # (2, 4),
@@ -1949,7 +1950,7 @@ def test_flash_attn_splitkv(
         # (1, 339),
         # (3, 1024),
         # (64, 800),
-        # (64, 256),
+        (64, 256),
         # (3, 799),
         # (64, 2048),
         # (16, 20000),
@@ -2017,9 +2018,9 @@ def test_flash_attn_kvcache(
     device = "cuda"
     # set seed
     torch.random.manual_seed(0)
-    batch_size = 1
+    batch_size = 2 # was 2
     batch_size_cache = batch_size if not has_batch_idx else batch_size * 2
-    nheads = 1
+    nheads = 6 # was 6
     if DEBUG_KVCACHE:
         print("nheads:", nheads)
         print("batch_size:", batch_size)
@@ -2043,7 +2044,7 @@ def test_flash_attn_kvcache(
         if DEBUG_KVCACHE:
             print("k_cache:", k_cache, k_cache.shape)
             print("v_cache:", v_cache, v_cache.shape)
-            print("block_table:", block_table, block_table.shape)
+            print("block_table:", block_table, block_table.shape if block_table is not None else None)
     else:
         (
             k_cache,
@@ -2236,11 +2237,11 @@ def test_flash_attn_kvcache(
             )[:, :seqlen_k]
         
         if DEBUG_KVCACHE:
-            print("k:", k, k.shape)
-            print("k_cache:", k_cache, k_cache.shape)
-            print("k_cache_rep", k_cache_rep, k_cache_rep.shape)
-            print("k_cache_select:", k_cache_select, k_cache_select.shape)
-            print("k_cache_ref:", k_cache_ref, k_cache_ref.shape)
+            # print("k:", k, k.shape)
+            # print("k_cache:", k_cache, k_cache.shape)
+            # print("k_cache_rep:", k_cache_rep, k_cache_rep.shape)
+            # print("k_cache_select:", k_cache_select, k_cache_select.shape)
+            # print("k_cache_ref:", k_cache_ref, k_cache_ref.shape)
             pass
             
 
@@ -2252,7 +2253,8 @@ def test_flash_attn_kvcache(
 
 def _generate_block_kvcache(seqlen_k, paged_kv_block_size, batch_size, nheads_k, d, device, dtype):
     num_blocks = math.ceil(seqlen_k / paged_kv_block_size) * batch_size * 3
-    if True:
+    # Mark
+    if False:
         k_cache_paged = torch.arange(num_blocks * paged_kv_block_size * nheads_k * d, device=device, dtype=dtype).reshape(
             num_blocks, paged_kv_block_size, nheads_k, d
         )

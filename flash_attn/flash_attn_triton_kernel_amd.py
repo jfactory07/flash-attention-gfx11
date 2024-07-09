@@ -386,9 +386,7 @@ def attn_fwd(Q, K, V, bias, cache_seqlens, sm_scale, L, Out, stride_qz, stride_q
         
     if USE_CACHE_SEQLENS:
         cache_seqlen = tl.load(cache_seqlens + off_z * stride_cz) # gives the index where the cache_seqlen ends
-        if cache_seqlen == 0 or cache_seqlen == MAX_SEQLENS_K:
-            seqlen_k = MAX_SEQLENS_K
-        elif NEW_KV == True:
+        if NEW_KV == True:
             seqlen_k = cache_seqlen + SEQLEN_NEW 
         else:
             seqlen_k = cache_seqlen # NOTE: we might have to add 1. cache_seqlen might be an index instaed of a length. This works for now.
