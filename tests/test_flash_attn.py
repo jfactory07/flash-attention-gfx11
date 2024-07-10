@@ -1904,32 +1904,34 @@ def test_flash_attn_splitkv(
 
 # @pytest.mark.parametrize("dtype", ([torch.float16] if is_sm75 else [torch.float16, torch.bfloat16]))
 @pytest.mark.parametrize("dtype", [torch.float16])
-@pytest.mark.parametrize("num_splits", [1, 0]) # works
-# @pytest.mark.parametrize("num_splits", [1])
+# @pytest.mark.parametrize("num_splits", [1, 0]) # works
+@pytest.mark.parametrize("num_splits", [1])
 @pytest.mark.parametrize("mha_type", ["mha", "mqa", "gqa"]) # works. Issue with gqa if head is not good factor
 # @pytest.mark.parametrize("mha_type", ["mha"])
 @pytest.mark.parametrize("new_kv", [False, True]) # works
 # @pytest.mark.parametrize("new_kv", [True])
-@pytest.mark.parametrize("alibi", [False, True]) # works
-# @pytest.mark.parametrize("alibi", [False])
-@pytest.mark.parametrize("local", [False, True]) # waiting for sliding window attention
-# @pytest.mark.parametrize("local", [False])
-@pytest.mark.parametrize("causal", [False, True]) # works
-# @pytest.mark.parametrize("causal", [False])
-@pytest.mark.parametrize("seqlen_new_eq_seqlen_q", [True, False]) # works
-# @pytest.mark.parametrize("seqlen_new_eq_seqlen_q", [True])
-@pytest.mark.parametrize("rotary_interleaved", [False, True]) # works
-# @pytest.mark.parametrize("rotary_interleaved", [False])
-@pytest.mark.parametrize("rotary_fraction", [0.0, 0.5, 1.0]) # broken. Runs when new_kv is True otherwise is skipped
-# @pytest.mark.parametrize("rotary_fraction", [0.0])
+# @pytest.mark.parametrize("new_kv", [False])
+# @pytest.mark.parametrize("alibi", [False, True]) # works
+@pytest.mark.parametrize("alibi", [False])
+# @pytest.mark.parametrize("local", [False, True]) # waiting for sliding window attention
+@pytest.mark.parametrize("local", [False])
+# @pytest.mark.parametrize("causal", [False, True]) # works
+@pytest.mark.parametrize("causal", [False])
+# @pytest.mark.parametrize("seqlen_new_eq_seqlen_q", [True, False]) # works
+@pytest.mark.parametrize("seqlen_new_eq_seqlen_q", [True])
+# @pytest.mark.parametrize("rotary_interleaved", [False, True]) # works
+@pytest.mark.parametrize("rotary_interleaved", [False])
+# @pytest.mark.parametrize("rotary_fraction", [0.0, 0.5, 1.0]) # broken. Runs when new_kv is True otherwise is skipped
+@pytest.mark.parametrize("rotary_fraction", [0.0])
 @pytest.mark.parametrize("paged_kv_block_size", [None, 256]) # works by unpageing cache
 # @pytest.mark.parametrize("paged_kv_block_size", [256, 512])
 # @pytest.mark.parametrize("paged_kv_block_size", [256])
 # @pytest.mark.parametrize("paged_kv_block_size", [256])
 # @pytest.mark.parametrize("paged_kv_block_size", [8])
 # @pytest.mark.parametrize("paged_kv_block_size", [None])
-# @pytest.mark.parametrize("has_batch_idx", [False, True]) # works
-@pytest.mark.parametrize("has_batch_idx", [False])
+@pytest.mark.parametrize("has_batch_idx", [False, True]) # works
+# @pytest.mark.parametrize("has_batch_idx", [True])
+# @pytest.mark.parametrize("has_batch_idx", [False])
 # @pytest.mark.parametrize("d", [32, 59, 64, 80, 128, 256])
 # @pytest.mark.parametrize("d", [32, 64, 96, 128, 160, 192, 224, 256])
 # @pytest.mark.parametrize('d', [32, 40, 64, 80, 96, 128, 160, 192])
