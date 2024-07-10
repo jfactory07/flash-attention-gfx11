@@ -6,6 +6,7 @@ import sys
 import triton
 import triton.language as tl
 
+DEBUG = False
 
 def _strides(x: torch.Tensor, *stride_names: str):
     assert x.ndim == len(stride_names)
@@ -450,8 +451,6 @@ def get_split_k(B: int, G: int, H: int, Mk: int) -> int:
     split_k = min(split_k, 512)
     split_k = max(split_k, 1)
     return split_k
-
-DEBUG_KVCACHE=True
 class _attention(torch.autograd.Function):
 
     OPERATOR = _fwd_kernel_splitK
@@ -469,7 +468,7 @@ class _attention(torch.autograd.Function):
 
     @staticmethod
     def forward(cls, q, k, v, scale_float):
-        if DEBUG_KVCACHE:
+        if DEBUG:
             print()
             print("attention_inference.forward")
             print("q:", q.shape)

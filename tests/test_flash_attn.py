@@ -17,7 +17,7 @@ from flash_attn.bert_padding import pad_input, unpad_input
 from flash_attn.flash_attn_interface import _get_block_size_n
 from flash_attn.layers.rotary import apply_rotary_emb
 
-DEBUG=False
+DEBUG = False
 
 MAX_HEADDIM_SM8x = 192
 
@@ -874,8 +874,6 @@ def is_hip():
 
 def is_power_of_2(n):
     return n > 0 and (n & (n - 1)) == 0
-
-DEBUG=False
 
 @pytest.mark.parametrize("kvpacked", [True, False])
 # @pytest.mark.parametrize("kvpacked", [False])
