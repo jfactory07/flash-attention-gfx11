@@ -4,9 +4,6 @@ from .flash_attn_triton_kernel_amd import MetaData, attention, get_shape_from_la
 from .flash_attn_triton_decode_amd import attention_inference
 
 DEBUG=False
-DEBUG_VARLEN=False
-DEBUG_KVCACHE=True
-
 
 def fwd(q,
         k,
@@ -92,7 +89,7 @@ def varlen_fwd(
         return_softmax,
         gen_):
     
-    if DEBUG_VARLEN:
+    if DEBUG:
         print("flash_attn_triton_amd.py::varlen_fwd")
         print("q:", q.shape)
         print("k:", k.shape)
@@ -148,43 +145,8 @@ def varlen_fwd(
 
     return tri_out, q , k , v, o, softmax_lse, softmax_p, torch.get_rng_state()
 
-
-def unpage_inplace(paged_cache, block_table, seqlen_k):
-    if DEBUG_KVCACHE:
-        print("paged_cache before:", paged_cache, paged_cache.shape)
-        print("block_table:", block_table, block_table.shape)
-    
-    # Extract dimensions
-    num_blocks, block_size, nheads_k, d = paged_cache.shape
-    batch_size, num_blocks_per_batch = block_table.shape
-    seqlen_k_inferred = num_blocks_per_batch * block_size
-
-    # Create a temporary buffer to hold the data during rearrangement
-    temp_buffer = torch.empty_like(paged_cache[:batch_size * num_blocks_per_batch])
-
-    # Rearrange the cache in-place
-    for i in range(batch_size):
-        for j, block_idx in enumerate(block_table[i]):
-            if block_idx != -1:  # Ignore padding blocks
-                start = i * num_blocks_per_batch + j
-                temp_buffer[start] = paged_cache[block_idx]
-
-    # Copy the rearranged data back to paged_cache
-    paged_cache[:batch_size * num_blocks_per_batch] = temp_buffer
-
-    # Reshape paged_cache to the unpaged shape
-    paged_cache = paged_cache.view(batch_size, seqlen_k_inferred, nheads_k, d)
-
-    # Truncate paged_cache to seqlen_k in-place
-    paged_cache = paged_cache[:, :seqlen_k, :, :]
-
-    if DEBUG_KVCACHE:
-        print("paged_cache after:", paged_cache, paged_cache.shape)
-
-    return paged_cache
-
 def unpage(paged_cache, block_table, seqlen_k):
-    if DEBUG_KVCACHE:
+    if DEBUG:
         print("paged_cache:", paged_cache, paged_cache.shape)
         print("block_table:", block_table, block_table.shape)
     
@@ -201,18 +163,17 @@ def unpage(paged_cache, block_table, seqlen_k):
     # Reconstruct the unpaged cache
     for i in range(batch_size):
         for j, block_idx in enumerate(block_table[i]):
-            if block_idx != -1:  # Ignore padding blocks
+            if block_idx != -1:
                 start = j * block_size
                 end = min((j + 1) * block_size, seqlen_k_inferred)
                 unpaged_cache[i, start:end] = paged_cache[block_idx, :end-start]
 
-    if DEBUG_KVCACHE:
+    if DEBUG:
         print("unpaged_cache:", unpaged_cache, unpaged_cache.shape)
-
     return unpaged_cache[:, :seqlen_k, :, :]
 
 def update_cache_inplace(cache, new_seq, cache_seqlens, print=False):
-    if DEBUG_KVCACHE and print:
+    if DEBUG and print:
         print("cache before:", cache)
         print("new_seq:", new_seq)
         print("cache_seqlens:", cache_seqlens)
@@ -239,13 +200,13 @@ def update_cache_inplace(cache, new_seq, cache_seqlens, print=False):
     # Update the cache in-place with new_seq where the mask is True
     cache[update_mask] = new_seq.view(-1, nheads, d)
 
-    if DEBUG_KVCACHE and print:
+    if DEBUG and print:
         print("cache after:", cache)
     
     return
 
 def update_cache_slice_inplace(cache, new_seq, cache_seqlens, cache_batch_idx, print=False):
-    if DEBUG_KVCACHE and print:
+    if DEBUG and print:
         print("cache before:", cache)
         print("new_seq:", new_seq)
         print("cache_seqlens:", cache_seqlens)
@@ -272,13 +233,13 @@ def update_cache_slice_inplace(cache, new_seq, cache_seqlens, cache_batch_idx, p
         cache_idx = cache_batch_idx[i]
         cache[cache_idx][update_mask[i]] = new_seq[i][:(update_mask[i].sum())]
 
-    if DEBUG_KVCACHE and print:
+    if DEBUG and print:
         print("cache after:", cache)
-    
+
     return
 
 def updated_paged_cache_inplace(paged_cache, new_seqs, cache_seqlens, block_table, debug_print=False):
-    debug_print = DEBUG_KVCACHE and debug_print
+    debug_print = DEBUG and debug_print
     
     if debug_print:
         print("paged_cache before:", paged_cache, paged_cache.shape)
@@ -298,34 +259,21 @@ def updated_paged_cache_inplace(paged_cache, new_seqs, cache_seqlens, block_tabl
         new_seq = new_seqs[i]
         start_idx = cache_seqlens[i]
 
-        if debug_print:
-            print("seq_blocks:", seq_blocks)
-            print("valid_blocks:", valid_blocks)
-            print("new_seq:", new_seq)
-            print("start_idx:", start_idx)
-        
         for j, block_idx in enumerate(valid_blocks):
             block_start = j * block_size
             block_end = min((j + 1) * block_size, start_idx + seqlen_new)
-            if debug_print:
-                print("block_start:", block_start)
-                print("block_end:", block_end)
             
             # Calculate the range of indices to update in this block
             update_start = max(start_idx - block_start, 0)
             update_end = min(block_end - block_start, block_size)
 
-            if debug_print:
-                print("update_start:", update_start)
-                print("update_end:", update_end)
-            
             if update_end > update_start:
                 # Update the cache for this block
                 paged_cache[block_idx, update_start:update_end] = new_seq[block_start + update_start - start_idx:block_start + update_end - start_idx]
 
     if debug_print:
         print("paged_cache after:", paged_cache)
-    
+
     return paged_cache
 
 
@@ -349,7 +297,7 @@ def fwd_kvcache(
         rotary_interleaved,
         num_splits):
     
-    if DEBUG_KVCACHE:
+    if DEBUG:
         print()
         print("flash_attn_triton_amd.py::fwd_kvcache")
         print("q:", q.shape)
@@ -374,7 +322,9 @@ def fwd_kvcache(
     if out is None:
         out = torch.empty_like(q)
 
-    if True:
+
+    BASELINE_IMPL = True
+    if BASELINE_IMPL:
         q_input = q
         input_metadata = MetaData(sm_scale=softmax_scale)
 
@@ -382,14 +332,12 @@ def fwd_kvcache(
         if block_table is not None:
             # new kv
             if k is not None and v is not None:
-                # fill metadata
+                # update metadata
                 input_metadata.new_kv = True
                 input_metadata.seqlen_new = k.shape[1]
 
                 updated_paged_cache_inplace(k_cache, k, cache_seqlens, block_table)
                 updated_paged_cache_inplace(v_cache, v, cache_seqlens, block_table)
-
-               
 
             # unpage so that it can run in a regular attention kernel
             unpage_seqlen_k = max(cache_seqlens) + 1 # infer the seqlen_k if paged cache
@@ -404,7 +352,7 @@ def fwd_kvcache(
 
             # new kv
             if k is not None and v is not None:
-                # fill metadata
+                # update metadata
                 input_metadata.new_kv = True
                 input_metadata.seqlen_new = k.shape[1] 
 
@@ -431,14 +379,14 @@ def fwd_kvcache(
                     k_input = k_cache
                     v_input = v_cache
 
-        # set metadata
+        # update metadata
         seqlen_q = q_input.shape[1]
         seqlen_k = k_input.shape[1]
         input_metadata.max_seqlens_q = seqlen_q
         input_metadata.max_seqlens_k = seqlen_k
-        input_metadata.layout = "bshd"
+        input_metadata.layout = "bshd"    
+        input_metadata.cache_seqlens = cache_seqlens # cache seqlens (seqlens in kvcache) (b x 1)
         
-
         batch, nheads_q, nheads_k, head_size = get_shape_from_layout(q_input, k_input, input_metadata)
         
         if causal:
@@ -446,12 +394,6 @@ def fwd_kvcache(
         
         if alibi_slopes is not None:
             input_metadata.need_alibi(alibi_slopes, batch, nheads_q)
-
-        # cache seqlens (seqlens in kvcache) (b x 1)
-        input_metadata.cache_seqlens = cache_seqlens
-
-        if out is None:
-            out = torch.empty_like(q)
     
         # Check arguments
         input_metadata.check_args(q_input, k_input, v_input, out)
@@ -462,16 +404,16 @@ def fwd_kvcache(
         softmax_lse = encoded_softmax
         softmax_p = encoded_softmax
     else:
-        q_input=q.unsqueeze(3)
-        k_input=k_cache.unsqueeze(3)
-        v_input=v_cache.unsqueeze(3)
+        # q_input=q.unsqueeze(3)
+        # k_input=k_cache.unsqueeze(3)
+        # v_input=v_cache.unsqueeze(3)
         
-        tri_out = attention_inference(q_input, k_input, v_input, softmax_scale)
+        # tri_out = attention_inference(q_input, k_input, v_input, softmax_scale)
+        pass
 
-    if DEBUG_KVCACHE:
+    if DEBUG:
         print()
         print("tri_out:", tri_out.shape)
-
 
     return tri_out, None
 

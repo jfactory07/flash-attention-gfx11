@@ -28,6 +28,8 @@ import torch
 import triton
 import triton.language as tl
 
+DEBUG=False
+
 
 class MetaData():
     cu_seqlens_q = None
@@ -268,7 +270,6 @@ def _attn_fwd_inner(acc, l_i, m_i, q, k_ptrs, v_ptrs, bias_ptrs, stride_kn, stri
         
         # -- compute qk ----
         qk += tl.dot(q, k)
-        # print("qk:", qk)
 
         if IS_CAUSAL:
             causal_boundary = start_n + offs_n_causal
@@ -327,26 +328,26 @@ def _attn_fwd_inner(acc, l_i, m_i, q, k_ptrs, v_ptrs, bias_ptrs, stride_kn, stri
 
 @triton.autotune(
     configs=[
-        # triton.Config({'BLOCK_M': 256, 'BLOCK_N': 64, 'waves_per_eu': 2, 'PRE_LOAD_V': False}, num_stages=1,
-        #               num_warps=8),
-        # triton.Config({'BLOCK_M': 128, 'BLOCK_N': 128, 'waves_per_eu': 2, 'PRE_LOAD_V': False}, num_stages=1,
-        #               num_warps=4),
-        # triton.Config({'BLOCK_M': 256, 'BLOCK_N': 128, 'waves_per_eu': 2, 'PRE_LOAD_V': False}, num_stages=1,
-        #               num_warps=8),
-        # triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 3, 'PRE_LOAD_V': True}, num_stages=1,
-        #               num_warps=4),
-        # triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 3, 'PRE_LOAD_V': False}, num_stages=1,
-        #               num_warps=4),
+        triton.Config({'BLOCK_M': 256, 'BLOCK_N': 64, 'waves_per_eu': 2, 'PRE_LOAD_V': False}, num_stages=1,
+                      num_warps=8),
+        triton.Config({'BLOCK_M': 128, 'BLOCK_N': 128, 'waves_per_eu': 2, 'PRE_LOAD_V': False}, num_stages=1,
+                      num_warps=4),
+        triton.Config({'BLOCK_M': 256, 'BLOCK_N': 128, 'waves_per_eu': 2, 'PRE_LOAD_V': False}, num_stages=1,
+                      num_warps=8),
+        triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 3, 'PRE_LOAD_V': True}, num_stages=1,
+                      num_warps=4),
+        triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 3, 'PRE_LOAD_V': False}, num_stages=1,
+                      num_warps=4),
         triton.Config({'BLOCK_M': 64, 'BLOCK_N': 64, 'waves_per_eu': 4, 'PRE_LOAD_V': False}, num_stages=1,
                       num_warps=8),
-        # triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 1, 'PRE_LOAD_V': False}, num_stages=1,
-        #               num_warps=4),
-        # triton.Config({'BLOCK_M': 32, 'BLOCK_N': 32, 'waves_per_eu': 4, 'PRE_LOAD_V': False}, num_stages=1,
-        #               num_warps=8),
+        triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 1, 'PRE_LOAD_V': False}, num_stages=1,
+                      num_warps=4),
+        triton.Config({'BLOCK_M': 32, 'BLOCK_N': 32, 'waves_per_eu': 4, 'PRE_LOAD_V': False}, num_stages=1,
+                      num_warps=8),
         # TODO: This config fails with head_size not pow2 with data mismatches. Check why.
         #    triton.Config({'BLOCK_M': 32, 'BLOCK_N': 16, 'waves_per_eu': 1, 'PRE_LOAD_V': False}, num_stages=1, num_warps=4),
-        # triton.Config({'BLOCK_M': 16, 'BLOCK_N': 16, 'waves_per_eu': 1, 'PRE_LOAD_V': False}, num_stages=1,
-        #               num_warps=4),
+        triton.Config({'BLOCK_M': 16, 'BLOCK_N': 16, 'waves_per_eu': 1, 'PRE_LOAD_V': False}, num_stages=1,
+                      num_warps=4),
     ],
     key=['IS_CAUSAL', 'dropout_p', 'BLOCK_DMODEL'],
     use_cuda_graph=True,
@@ -385,11 +386,11 @@ def attn_fwd(Q, K, V, bias, cache_seqlens, sm_scale, L, Out, stride_qz, stride_q
 
         
     if USE_CACHE_SEQLENS:
-        cache_seqlen = tl.load(cache_seqlens + off_z * stride_cz) # gives the index where the cache_seqlen ends
+        cache_seqlen = tl.load(cache_seqlens + off_z * stride_cz)
         if NEW_KV == True:
             seqlen_k = cache_seqlen + SEQLEN_NEW 
         else:
-            seqlen_k = cache_seqlen # NOTE: we might have to add 1. cache_seqlen might be an index instaed of a length. This works for now.
+            seqlen_k = cache_seqlen
     else:
         seqlen_k = MAX_SEQLENS_K
 
@@ -903,12 +904,12 @@ def get_strides_from_layout(q, k, v, o, metadata):
         assert False, 'Got unsupported layout.'
     return q_strides, k_strides, v_strides, o_strides
 
-DEBUG_KVCACHE = True
+
 class _attention(torch.autograd.Function):
 
     @staticmethod
     def forward(ctx, q, k, v, o, metadata):
-        if DEBUG_KVCACHE:
+        if DEBUG:
             print()
             print("_attention.forward")
             print("q:", q, q.shape)
@@ -967,7 +968,6 @@ class _attention(torch.autograd.Function):
             cache_seqlens_strides = (metadata.cache_seqlens.stride(0), )
         else:
             cache_seqlens_strides = (0, )
-        print("cache_seqlens_strides:", cache_seqlens_strides)
 
         attn_fwd[grid](q, k, v, metadata.bias, metadata.cache_seqlens, metadata.sm_scale, M, o, *q_strides, *k_strides, *v_strides, *o_strides,
                        *bias_strides, *cache_seqlens_strides, *alibi_strides, metadata.cu_seqlens_q, metadata.cu_seqlens_k,

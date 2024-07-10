@@ -18,7 +18,6 @@ from flash_attn.flash_attn_interface import _get_block_size_n
 from flash_attn.layers.rotary import apply_rotary_emb
 
 DEBUG=False
-DEBUG_KVCACHE=True
 
 MAX_HEADDIM_SM8x = 192
 
@@ -243,7 +242,7 @@ def attention_ref(
         output: (batch_size, seqlen_q, nheads, head_dim)
         attention: (batch_size, nheads, seqlen_q, seqlen_k), softmax after dropout
     """
-    PRINT_DEBUG = DEBUG_KVCACHE and upcast==True
+    PRINT_DEBUG = DEBUG and upcast==True
 
     if PRINT_DEBUG:
         print()
@@ -261,7 +260,6 @@ def attention_ref(
         print("upcast:",upcast)
         print("reorder_ops:",reorder_ops)
 
-
     if causal:
         window_size = (window_size[0], 0)
     dtype_og = q.dtype
@@ -275,14 +273,12 @@ def attention_ref(
         scores = torch.einsum("bthd,bshd->bhts", q / math.sqrt(d), k)
     else:
         scores = torch.einsum("bthd,bshd->bhts", q, k / math.sqrt(d))
-    
+
     if PRINT_DEBUG:
-        print("scores:",scores, scores.shape)
-    
+        print("scores before:", scores, scores.shape)
+
     if key_padding_mask is not None:
         scores.masked_fill_(rearrange(~key_padding_mask, "b s -> b 1 1 s"), float("-inf"))
-        if PRINT_DEBUG:
-            print("scores after key_padding_mask:",scores)
     if window_size[0] >= 0 or window_size[1] >= 0:
         local_mask = construct_local_mask(
             seqlen_q,
@@ -293,10 +289,12 @@ def attention_ref(
             q.device,
         )
         scores.masked_fill_(local_mask, float("-inf"))
-        if PRINT_DEBUG:
-            print("scores after local_mask:",scores)
     if attn_bias is not None:
         scores = scores + attn_bias
+
+    if PRINT_DEBUG:
+        print("scores after:",scores)
+    
     attention = torch.softmax(scores, dim=-1).to(v.dtype)
     # Some rows might be completely masked out so we fill them with zero instead of NaN
     if window_size[0] >= 0 or window_size[1] >= 0:
@@ -1906,7 +1904,7 @@ def test_flash_attn_splitkv(
 @pytest.mark.parametrize("dtype", [torch.float16])
 @pytest.mark.parametrize("num_splits", [1, 0])
 # @pytest.mark.parametrize("num_splits", [1])
-@pytest.mark.parametrize("mha_type", ["mha", "mqa", "gqa"]) # works. Issue with gqa if head is not good factor
+@pytest.mark.parametrize("mha_type", ["mha", "mqa", "gqa"])
 # @pytest.mark.parametrize("mha_type", ["mha"])
 @pytest.mark.parametrize("new_kv", [False, True])
 # @pytest.mark.parametrize("new_kv", [False])
@@ -1932,16 +1930,9 @@ def test_flash_attn_splitkv(
 # @pytest.mark.parametrize('d', [32, 40, 64, 80, 96, 128, 160, 192])
 # @pytest.mark.parametrize('d', [56, 80])
 # @pytest.mark.parametrize("d", [128])
-# @pytest.mark.parametrize("d", [16])
 @pytest.mark.parametrize(
     "seqlen_q,seqlen_k",
-    [   
-        # (1, 1),
-        # (1, 2),
-        # (1, 4),
-        # (1, 8),
-        # (2, 4),
-        # (8, 8),
+    [
         (1, 128),
         (1, 339),
         (3, 1024),
@@ -1973,9 +1964,7 @@ def test_flash_attn_kvcache(
     num_splits,
     dtype,
 ):
-    # torch.set_printoptions(threshold=4, edgeitems=2, precision=4)
-
-    if DEBUG_KVCACHE:
+    if DEBUG:
         print()
         print("test_flash_attn_kvcache")
         print("seqlen_q:", seqlen_q)
@@ -2014,10 +2003,11 @@ def test_flash_attn_kvcache(
     device = "cuda"
     # set seed
     torch.random.manual_seed(0)
-    batch_size = 2 # was 2
+    batch_size = 2
     batch_size_cache = batch_size if not has_batch_idx else batch_size * 2
-    nheads = 6 # was 6
-    if DEBUG_KVCACHE:
+    nheads = 6
+    
+    if DEBUG:
         print("nheads:", nheads)
         print("batch_size:", batch_size)
 
@@ -2037,7 +2027,7 @@ def test_flash_attn_kvcache(
         k_cache = torch.randn(batch_size_cache, seqlen_k, nheads_k, d, device=device, dtype=dtype)
         v_cache = torch.randn(batch_size_cache, seqlen_k, nheads_k, d, device=device, dtype=dtype)
         block_table = None
-        if DEBUG_KVCACHE:
+        if DEBUG:
             print("k_cache:", k_cache, k_cache.shape)
             print("v_cache:", v_cache, v_cache.shape)
             print("block_table:", block_table, block_table.shape if block_table is not None else None)
@@ -2052,7 +2042,7 @@ def test_flash_attn_kvcache(
         ) = _generate_block_kvcache(
             seqlen_k, paged_kv_block_size, batch_size, nheads_k, d, device, dtype
         )
-        if DEBUG_KVCACHE:
+        if DEBUG:
             print("k_cache_paged:", k_cache_paged, k_cache_paged.shape)
             print("v_cache_paged:", v_cache_paged, v_cache_paged.shape)
             print("block_table:", block_table, block_table.shape)
@@ -2078,7 +2068,7 @@ def test_flash_attn_kvcache(
         ]
     else:
         cache_batch_idx = None
-    if DEBUG_KVCACHE:
+    if DEBUG:
         print("cache_seqlens:", cache_seqlens)
         print("arange:", arange)
         print("cache_seqlens_expanded:", cache_seqlens_expanded)
@@ -2198,7 +2188,7 @@ def test_flash_attn_kvcache(
         reorder_ops=True,
     )
 
-    if DEBUG_KVCACHE:
+    if DEBUG:
         print()
         print("out:", out, out.shape)
         print("out_ref:", out_ref, out_ref.shape)
@@ -2232,15 +2222,10 @@ def test_flash_attn_kvcache(
                 b=batch_size,
             )[:, :seqlen_k]
         
-        if DEBUG_KVCACHE:
-            # print("k:", k, k.shape)
-            # print("k_cache:", k_cache, k_cache.shape)
-            # print("k_cache_rep:", k_cache_rep, k_cache_rep.shape)
-            # print("k_cache_select:", k_cache_select, k_cache_select.shape)
-            # print("k_cache_ref:", k_cache_ref, k_cache_ref.shape)
-            pass
+        if DEBUG:
+            print("k_cache_select:", k_cache_select, k_cache_select.shape)
+            print("k_cache_ref:", k_cache_ref, k_cache_ref.shape)
             
-
         assert torch.allclose(k_cache_select, k_cache_ref, rtol=1e-3, atol=1e-3)
         assert torch.equal(v_cache_select, v_cache_ref)
     mult = 3 if not alibi else 5
@@ -2249,21 +2234,12 @@ def test_flash_attn_kvcache(
 
 def _generate_block_kvcache(seqlen_k, paged_kv_block_size, batch_size, nheads_k, d, device, dtype):
     num_blocks = math.ceil(seqlen_k / paged_kv_block_size) * batch_size * 3
-    # Mark
-    if False:
-        k_cache_paged = torch.arange(num_blocks * paged_kv_block_size * nheads_k * d, device=device, dtype=dtype).reshape(
-            num_blocks, paged_kv_block_size, nheads_k, d
-        )
-        v_cache_paged = torch.arange(num_blocks * paged_kv_block_size * nheads_k * d, device=device, dtype=dtype).reshape(
-            num_blocks, paged_kv_block_size, nheads_k, d
-        )
-    else:
-        k_cache_paged = torch.randn(
-            num_blocks, paged_kv_block_size, nheads_k, d, device=device, dtype=dtype
-        )
-        v_cache_paged = torch.randn(
-            num_blocks, paged_kv_block_size, nheads_k, d, device=device, dtype=dtype
-        )
+    k_cache_paged = torch.randn(
+        num_blocks, paged_kv_block_size, nheads_k, d, device=device, dtype=dtype
+    )
+    v_cache_paged = torch.randn(
+        num_blocks, paged_kv_block_size, nheads_k, d, device=device, dtype=dtype
+    )
     block_table = rearrange(
         torch.randperm(num_blocks, dtype=torch.int32, device=device),
         "(b nblocks) -> b nblocks",
