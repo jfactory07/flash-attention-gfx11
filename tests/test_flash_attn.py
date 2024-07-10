@@ -17,7 +17,7 @@ from flash_attn.bert_padding import pad_input, unpad_input
 from flash_attn.flash_attn_interface import _get_block_size_n
 from flash_attn.layers.rotary import apply_rotary_emb
 
-DEBUG = True
+DEBUG = False
 
 MAX_HEADDIM_SM8x = 192
 
@@ -1932,7 +1932,8 @@ def test_flash_attn_splitkv(
 @pytest.mark.parametrize(
     "seqlen_q,seqlen_k",
     [
-        (1, 2)
+        # (1, 2)
+        (1, 4)
         # (1, 128),
         # (1, 339),
         # (3, 1024),

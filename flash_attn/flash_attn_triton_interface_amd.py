@@ -323,7 +323,7 @@ def fwd_kvcache(
         out = torch.empty_like(q)
 
 
-    BASELINE_IMPL = True
+    BASELINE_IMPL = False
     if BASELINE_IMPL:
         q_input = q
         input_metadata = MetaData(sm_scale=softmax_scale)
@@ -404,11 +404,23 @@ def fwd_kvcache(
         softmax_lse = encoded_softmax
         softmax_p = encoded_softmax
     else:
-        q_input=q.unsqueeze(3)
-        k_input=k_cache.unsqueeze(3)
-        v_input=v_cache.unsqueeze(3)
-        
-        tri_out = attention_inference(q_input, k_input, v_input, softmax_scale)
+        q_input=q
+        k_input=k_cache
+        v_input=v_cache
+
+        # fill metadata
+        input_metadata = MetaData(sm_scale=softmax_scale)
+        seqlen_q = q_input.shape[1]
+        seqlen_k = k_input.shape[1]
+        input_metadata.max_seqlens_q = seqlen_q
+        input_metadata.max_seqlens_k = seqlen_k
+        input_metadata.layout = "bshd"    
+        input_metadata.cache_seqlens = cache_seqlens
+
+        # Check arguments
+        input_metadata.check_args(q_input, k_input, v_input, out)
+
+        tri_out = attention_inference(q_input, k_input, v_input, input_metadata)
         pass
 
     if DEBUG:

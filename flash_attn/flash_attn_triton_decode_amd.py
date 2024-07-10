@@ -467,14 +467,14 @@ class _attention(torch.autograd.Function):
     NAME = "triton_splitKF"
 
     @staticmethod
-    def forward(cls, q, k, v, scale_float):
+    def forward(cls, q, k, v, metadata):
         if DEBUG:
             print()
             print("attention_inference.forward")
             print("q:", q.shape)
             print("k:", k.shape)
             print("v:", v.shape)
-            print("scale_float:", scale_float)
+            print("metadata:", metadata)
 
 
         cls.SPLIT_K: Optional[int] = None
@@ -532,7 +532,7 @@ class _attention(torch.autograd.Function):
             Q=q,
             K=k,
             V=v,
-            sm_scale=scale_float,
+            sm_scale=metadata.sm_scale,
             Out_splitK=o_splitk,
             Metadata=metadata,
             Seq_len=seq_len,
