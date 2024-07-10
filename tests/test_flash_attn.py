@@ -17,7 +17,7 @@ from flash_attn.bert_padding import pad_input, unpad_input
 from flash_attn.flash_attn_interface import _get_block_size_n
 from flash_attn.layers.rotary import apply_rotary_emb
 
-DEBUG = False
+DEBUG = True
 
 MAX_HEADDIM_SM8x = 192
 
@@ -2003,9 +2003,9 @@ def test_flash_attn_kvcache(
     device = "cuda"
     # set seed
     torch.random.manual_seed(0)
-    batch_size = 2
+    batch_size = 1 # 2
     batch_size_cache = batch_size if not has_batch_idx else batch_size * 2
-    nheads = 6
+    nheads = 1 # 6
     
     if DEBUG:
         print("nheads:", nheads)

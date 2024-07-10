@@ -6,7 +6,7 @@ import sys
 import triton
 import triton.language as tl
 
-DEBUG = False
+DEBUG = True
 
 def _strides(x: torch.Tensor, *stride_names: str):
     assert x.ndim == len(stride_names)

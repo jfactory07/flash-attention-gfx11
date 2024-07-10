@@ -3,7 +3,7 @@ import triton
 from .flash_attn_triton_kernel_amd import MetaData, attention, get_shape_from_layout, _attn_bwd_preprocess, _attn_bwd
 from .flash_attn_triton_decode_amd import attention_inference
 
-DEBUG=False
+DEBUG = True
 
 def fwd(q,
         k,
@@ -404,11 +404,11 @@ def fwd_kvcache(
         softmax_lse = encoded_softmax
         softmax_p = encoded_softmax
     else:
-        # q_input=q.unsqueeze(3)
-        # k_input=k_cache.unsqueeze(3)
-        # v_input=v_cache.unsqueeze(3)
+        q_input=q.unsqueeze(3)
+        k_input=k_cache.unsqueeze(3)
+        v_input=v_cache.unsqueeze(3)
         
-        # tri_out = attention_inference(q_input, k_input, v_input, softmax_scale)
+        tri_out = attention_inference(q_input, k_input, v_input, softmax_scale)
         pass
 
     if DEBUG:
