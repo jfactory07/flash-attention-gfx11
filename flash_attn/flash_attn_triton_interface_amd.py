@@ -1,7 +1,7 @@
 import torch
 import triton
-from .flash_attn_triton_kernel_amd import MetaData, attention, get_shape_from_layout, _attn_bwd_preprocess, _attn_bwd
-from .flash_attn_triton_decode_amd import attention_inference
+from .flash_attn_triton_kernel_prefill_amd import MetaData, attention_prefill, get_shape_from_layout, _attn_bwd_preprocess, _attn_bwd
+from .flash_attn_triton_kernel_decode_amd import attention_decode
 
 DEBUG = True
 
@@ -61,7 +61,7 @@ def fwd(q,
     input_metadata.check_args(q, k, v, o)
     
     # Perform the forward attention computation
-    tri_out, encoded_softmax = attention(q, k, v, o, input_metadata)
+    tri_out, encoded_softmax = attention_prefill(q, k, v, o, input_metadata)
 
     softmax_lse = encoded_softmax
     softmax_p = encoded_softmax
@@ -138,7 +138,7 @@ def varlen_fwd(
     input_metadata.check_args(q, k, v, o)
 
     # Perform the forward attention computation
-    tri_out, encoded_softmax = attention(q, k, v, o, input_metadata)
+    tri_out, encoded_softmax = attention_prefill(q, k, v, o, input_metadata)
 
     softmax_lse = encoded_softmax
     softmax_p = encoded_softmax
@@ -399,7 +399,7 @@ def fwd_kvcache(
         input_metadata.check_args(q_input, k_input, v_input, out)
 
         # Perform the forward attention computation
-        tri_out, encoded_softmax = attention(q_input, k_input, v_input, out, input_metadata)
+        tri_out, encoded_softmax = attention_prefill(q_input, k_input, v_input, out, input_metadata)
 
         softmax_lse = encoded_softmax
         softmax_p = encoded_softmax
@@ -420,7 +420,7 @@ def fwd_kvcache(
         # Check arguments
         input_metadata.check_args(q_input, k_input, v_input, out)
 
-        tri_out = attention_inference(q_input, k_input, v_input, input_metadata)
+        tri_out = attention_decode(q_input, k_input, v_input, input_metadata)
         pass
 
     if DEBUG:

@@ -49,6 +49,7 @@ class MetaData():
 
     def __repr__(self) -> str:
         return (f"MetaData(\n"
+                f"  sm_scale={self.sm_scale},\n"
                 f"  cu_seqlens_q={self.cu_seqlens_q},\n"
                 f"  cu_seqlens_k={self.cu_seqlens_k},\n"
                 f"  max_seqlens_q={self.max_seqlens_q},\n"
@@ -1068,7 +1069,7 @@ class _attention(torch.autograd.Function):
         return dq, dk, dv, None, None
 
 
-attention = _attention.apply
+attention_prefill = _attention.apply
 
 
 def input_helper(Z, HQ, HK, N_CTX_Q, N_CTX_K, D_HEAD, dtype, layout):
@@ -1163,7 +1164,7 @@ def test_op_fwd(Z, HQ, HK, N_CTX_Q, N_CTX_K, D_HEAD, causal, use_alibi, layout, 
     o = torch.empty_like(q)
 
     # triton implementation
-    tri_out, _ = attention(q, k, v, o, input_metadata)
+    tri_out, _ = attention_prefill(q, k, v, o, input_metadata)
 
     # Transpose here if layout is bshd so we have same reference code for all layouts
     if layout == 'bshd':
@@ -1234,7 +1235,7 @@ def test_op_fwd_bias(Z, H, N_CTX_Q, N_CTX_K, D_HEAD, causal, use_bias, dtype=tor
     o = torch.empty_like(q)
 
     # triton implementation
-    tri_out, _ = attention(q, k, v, o, input_metadata)
+    tri_out, _ = attention_prefill(q, k, v, o, input_metadata)
     # reference implementation:171
 
     scores = torch.einsum('bhqd,bhkd->bhqk', q, k).float() * sm_scale
@@ -1273,7 +1274,7 @@ def test_op_varlen_fwd(Z, H, N_CTX, D_HEAD, causal, dtype=torch.float16):
         scores = torch.einsum('qhd,khd->qhk', q[start_q:end_q], k[start_k:end_k]).float()
         p = torch.softmax(scores * input_metadata.sm_scale, dim=-1).half()
         ref_out[start_q:end_q] = torch.einsum('qhk,khd->qhd', p, v[start_k:end_k])
-    attention(q, k, v, tri_out, input_metadata)
+    attention_prefill(q, k, v, tri_out, input_metadata)
     torch.testing.assert_close(ref_out, tri_out, atol=1e-2, rtol=1e-2)
 
 
@@ -1301,7 +1302,7 @@ def test_op_varlen_mqa_fwd(Z, HQ, HK, N_CTX, D_HEAD, causal, dtype=torch.float16
         scores = torch.einsum('qhd,khd->qhk', q[start_q:end_q], k_curr).float()
         p = torch.softmax(scores * input_metadata.sm_scale, dim=-1).half()
         ref_out[start_q:end_q] = torch.einsum('qhk,khd->qhd', p, v_curr)
-    attention(q, k, v, tri_out, input_metadata)
+    attention_prefill(q, k, v, tri_out, input_metadata)
     torch.testing.assert_close(ref_out, tri_out, atol=1e-2, rtol=1e-2)
 
 
@@ -1378,7 +1379,7 @@ def test_op_bwd(Z, H, N_CTX, D_HEAD, qseqlen_not_equal_kseqlen, causal, torch_sd
         ref_dq, q.grad = q.grad.clone(), None
 
     # # triton implementation
-    tri_out, _ = attention(q, k, v, o, input_metadata)
+    tri_out, _ = attention_prefill(q, k, v, o, input_metadata)
     tri_out.backward(dout)
     tri_dv, v.grad = v.grad.clone(), None
     tri_dk, k.grad = k.grad.clone(), None
@@ -1510,7 +1511,7 @@ def run_benchmark(custom, args):
         if causal:
             input_metadata.need_causal()
         o = torch.empty_like(q)
-        fn = lambda: attention(q, k, v, o, input_metadata)
+        fn = lambda: attention_prefill(q, k, v, o, input_metadata)
         if mode == 'bwd':
             o, _ = fn()
             do = torch.randn_like(o)

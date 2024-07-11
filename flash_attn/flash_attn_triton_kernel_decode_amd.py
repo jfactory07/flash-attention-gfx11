@@ -467,14 +467,20 @@ class _attention(torch.autograd.Function):
     NAME = "triton_splitKF"
 
     @staticmethod
-    def forward(cls, q, k, v, metadata):
+    def forward(cls, q, k, v, input_metadata):
         if DEBUG:
             print()
-            print("attention_inference.forward")
+            print("attention_decode.forward")
             print("q:", q.shape)
             print("k:", k.shape)
             print("v:", v.shape)
-            print("metadata:", metadata)
+            print("input_metadata:", input_metadata)
+
+
+        if input_metadata.layout == "bshd":
+            q=q.unsqueeze(3)
+            k=k.unsqueeze(3)
+            v=v.unsqueeze(3)
 
 
         cls.SPLIT_K: Optional[int] = None
@@ -532,7 +538,7 @@ class _attention(torch.autograd.Function):
             Q=q,
             K=k,
             V=v,
-            sm_scale=metadata.sm_scale,
+            sm_scale=input_metadata.sm_scale,
             Out_splitK=o_splitk,
             Metadata=metadata,
             Seq_len=seq_len,
@@ -600,7 +606,7 @@ class _attention(torch.autograd.Function):
         return out
 
 
-attention_inference = _attention.apply
+attention_decode = _attention.apply
 
 
 def get_input_shapes():
@@ -629,7 +635,7 @@ def test_op_fwd(B, Mq, Mkv, Hq, Hkv, K, dtype=torch.float16):
     print("q:", q.shape)
     print("k:", k.shape)
     print("v:", v.shape)
-    tri_out = attention_inference(q, k, v, scale)
+    tri_out = attention_decode(q, k, v, scale)
     print("tri_out:", tri_out.shape)
     print()
 
@@ -664,7 +670,7 @@ def test_op_fwd_int4_kv(B, Mq, Mkv, Hq, Hkv, K, dtype=torch.float16):
     quant_k = (quantize_kv_int4(k, num_groups=num_groups).contiguous().view(torch.int32))
     quant_v = (quantize_kv_int4(v, num_groups=num_groups).contiguous().view(torch.int32))
     scale = 1 / K**0.5
-    tri_out = attention_inference(q, quant_k, quant_v, scale)
+    tri_out = attention_decode(q, quant_k, quant_v, scale)
 
     q = q.reshape([B, Mq, -1, K]).permute(0, 2, 1, 3)
     k = k.reshape([B, Mkv, -1, K]).permute(0, 2, 1, 3)
@@ -732,7 +738,7 @@ def bench_flash_attention(B, Mq, Mkv, Hq, Hkv, K, causal, mode, provider, dtype=
                         requires_grad=False).expand(-1, -1, -1, Hq // Hkv, -1)
 
         sm_scale = 1.3
-        fn = lambda: attention_inference(q, k, v, sm_scale)
+        fn = lambda: attention_decode(q, k, v, sm_scale)
         ms = triton.testing.do_bench(fn, warmup=warmup, rep=rep)
 
     # flops_per_matmul = 2 * B * Hq * (Mq * K * Mkv + Mq * Mkv * K)
