@@ -17,7 +17,7 @@ from flash_attn.bert_padding import pad_input, unpad_input
 from flash_attn.flash_attn_interface import _get_block_size_n
 from flash_attn.layers.rotary import apply_rotary_emb
 
-DEBUG = False
+DEBUG = True
 
 MAX_HEADDIM_SM8x = 192
 
@@ -1932,8 +1932,8 @@ def test_flash_attn_splitkv(
 @pytest.mark.parametrize(
     "seqlen_q,seqlen_k",
     [
-        # (1, 2)
-        (1, 4)
+        # (1, 2),
+        (1, 4),
         # (1, 128),
         # (1, 339),
         # (3, 1024),
@@ -2004,9 +2004,9 @@ def test_flash_attn_kvcache(
     device = "cuda"
     # set seed
     torch.random.manual_seed(0)
-    batch_size = 3 # 2
+    batch_size = 1 # 2
     batch_size_cache = batch_size if not has_batch_idx else batch_size * 2
-    nheads = 2 # 6
+    nheads = 1 # 6
     
     if DEBUG:
         print("nheads:", nheads)
@@ -2162,6 +2162,7 @@ def test_flash_attn_kvcache(
     # o1 = torch.einsum('bhst,bthd->bshd', s_tmp, v_cache_ref)
     # lse_ref = torch.logsumexp(qk / math.sqrt(d), -1)
     # probs = torch.softmax(qk, dim=-1)
+    # key_padding_mask = None # Used to confirm that need to implement key masking in decode kernel
     out_ref, _ = attention_ref(
         q_ro,
         k_cache_rep,

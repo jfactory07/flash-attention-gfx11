@@ -424,7 +424,7 @@ def fwd_kvcache(
 
     if DEBUG:
         print()
-        print("tri_out:", tri_out.shape)
+        print("tri_out:", tri_out, tri_out.shape)
 
     return tri_out, None
 

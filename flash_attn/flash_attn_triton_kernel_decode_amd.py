@@ -472,19 +472,26 @@ class _attention(torch.autograd.Function):
         if DEBUG:
             print()
             print("attention_decode.forward")
-            print("q:", q.shape)
-            print("k:", k.shape)
-            print("v:", v.shape)
+            print("q:", q, q.shape)
+            print("k:", k, k.shape)
+            print("v:", v, v.shape)
             print("input_metadata:", input_metadata)
 
+        # kernels expects "bsghd"
         if input_metadata.layout == "bhsd":
-            q=q.unsqueeze(3)
-            k=k.unsqueeze(3)
-            v=v.unsqueeze(3)
+            q=q.permute(0, 2, 1, 3).unsqueeze(2)
+            k=k.permute(0, 2, 1, 3).unsqueeze(2)
+            v=v.permute(0, 2, 1, 3).unsqueeze(2)
         elif input_metadata.layout == "bshd":
-            q=q.permute(0, 2, 1, 3).unsqueeze(3)
-            k=k.permute(0, 2, 1, 3).unsqueeze(3)
-            v=v.permute(0, 2, 1, 3).unsqueeze(3)
+            q=q.unsqueeze(2)
+            k=k.unsqueeze(2)
+            v=v.unsqueeze(2)
+        elif input_metadata.layout == "bsghd":
+            pass
+
+        print("q after layout change:", q, q.shape)
+        print("k after layout change:", k, k.shape)
+        print("v after layout change:", v, v.shape)
 
         cls.SPLIT_K: Optional[int] = None
         cls.BLOCK_M = 16
@@ -503,6 +510,7 @@ class _attention(torch.autograd.Function):
             q = q.transpose(1, 3)
             k = k[:, :, :, :1]
             v = v[:, :, :, :1]
+        print("mqa_swap_seqlen_head:", mqa_swap_seqlen_head)
 
         batch_size, seqlen_k, group_k, head_k, dim_k = k.shape
         PACKED_PER_VAL = 1
@@ -604,6 +612,7 @@ class _attention(torch.autograd.Function):
             out = out.reshape(batch_size, head_q * group_q, -1, dim_q).contiguous()
 
 
+        # out is "bhsd"
         if input_metadata.layout == "bshd":
             out=out.permute(0, 2, 1, 3)
 
@@ -620,26 +629,27 @@ def get_input_shapes():
     return cases
 
 
-@pytest.mark.parametrize('batch_size, seqlen_q, seqlen_k, Hq, Hkv, dim', get_input_shapes())
-# @pytest.mark.parametrize('batch_size, seqlen_q, seqlen_k, Hq, Hkv, dim', [[3, 1, 4, 2, 2, 16]]) # seq q has to be 1
-def test_op_fwd(batch_size, seqlen_q, seqlen_k, Hq, Hkv, dim, dtype=torch.float16):
+@pytest.mark.parametrize('batch_size, seqlen_q, seqlen_k, group_q, group_k, dim', get_input_shapes())
+def test_op_fwd(batch_size, seqlen_q, seqlen_k, group_q, group_k, dim, dtype=torch.float16):
     print()
-    print(f"batch_size = {batch_size}, seqlen_q = {seqlen_q}, seqlen_k = {seqlen_k}, Hq = {Hq}, Hkv = {Hkv}, dim = {dim}")
+    print(f"batch_size = {batch_size}, seqlen_q = {seqlen_q}, seqlen_k = {seqlen_k}, group_q = {group_q}, group_k = {group_k}, dim = {dim}")
     torch.manual_seed(20)
-    q = (torch.empty((batch_size, seqlen_q, Hkv, (Hq + Hkv - 1) // Hkv, dim), dtype=dtype,
+    query_group_head_size = (group_q + group_k - 1) // group_k
+    q = (torch.empty((batch_size, seqlen_q, group_k, query_group_head_size, dim), dtype=dtype,
                      device="cuda").normal_(mean=0., std=0.5).requires_grad_())
-    k = (torch.empty((batch_size, seqlen_k, Hkv, 1, dim), dtype=dtype,
+    k = (torch.empty((batch_size, seqlen_k, group_k, 1, dim), dtype=dtype,
                      device="cuda").normal_(mean=0.,
-                                            std=0.5).requires_grad_()).expand(-1, -1, -1, (Hq + Hkv - 1) // Hkv, -1)
-    v = (torch.empty((batch_size, seqlen_k, Hkv, 1, dim), dtype=dtype,
+                                            std=0.5).requires_grad_()).expand(-1, -1, -1, query_group_head_size, -1)
+    v = (torch.empty((batch_size, seqlen_k, group_k, 1, dim), dtype=dtype,
                      device="cuda").normal_(mean=0.,
-                                            std=0.5).requires_grad_()).expand(-1, -1, -1, (Hq + Hkv - 1) // Hkv, -1)
+                                            std=0.5).requires_grad_()).expand(-1, -1, -1, query_group_head_size, -1)
     scale = 1 / dim**0.5
 
     print("q:", q.shape)
     print("k:", k.shape)
     print("v:", v.shape)
     input_metadata = MetaData(sm_scale=scale)
+    input_metadata.layout = "bsghd"
     tri_out = attention_decode(q, k, v, input_metadata)
     print("tri_out:", tri_out.shape)
     print()
