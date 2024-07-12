@@ -1,4 +1,5 @@
 from typing import Optional
+from flash_attn.flash_attn_triton_kernel_prefill_amd import MetaData
 import pytest
 import torch
 import sys
@@ -476,12 +477,14 @@ class _attention(torch.autograd.Function):
             print("v:", v.shape)
             print("input_metadata:", input_metadata)
 
-
-        if input_metadata.layout == "bshd":
+        if input_metadata.layout == "bhsd":
             q=q.unsqueeze(3)
             k=k.unsqueeze(3)
             v=v.unsqueeze(3)
-
+        elif input_metadata.layout == "bshd":
+            q=q.permute(0, 2, 1, 3).unsqueeze(3)
+            k=k.permute(0, 2, 1, 3).unsqueeze(3)
+            v=v.permute(0, 2, 1, 3).unsqueeze(3)
 
         cls.SPLIT_K: Optional[int] = None
         cls.BLOCK_M = 16
@@ -501,18 +504,15 @@ class _attention(torch.autograd.Function):
             k = k[:, :, :, :1]
             v = v[:, :, :, :1]
 
+        batch_size, seqlen_k, group_k, head_k, dim_k = k.shape
+        PACKED_PER_VAL = 1
         if k.dtype == torch.int32:
             # Quantized K/V
             PACKED_PER_VAL = 8
-            Lk = (k.shape[-1] - cls.NUM_GROUPS) * 8
-        else:
-            Lk = k.shape[-1]
-            PACKED_PER_VAL = 1
-
-        B, Mk, G, H, Kkv = k.shape
-        B, M, G, H, Kq = q.shape
-        assert Lk == Kq, f"Keys have head dim {Lk} but queries have head dim {Kq}"
-        print(f"B = {B}, M = {M}, G = {G}, H = {H}, Kkv = {Kkv}, Kq = {Kq}")
+            dim_k = (k.shape[-1] - cls.NUM_GROUPS) * 8
+        batch_size, seqlen_q, group_q, head_q, dim_q = q.shape
+        assert dim_k == dim_q, f"Keys have head dim {dim_k} but queries have head dim {dim_q}"
+        print(f"batch_size = {batch_size}, seqlen_q = {seqlen_q}, seqlen_k = {seqlen_k}, head_q = {head_q}, head_k = {head_k}, dim_q = {dim_q}, dim_kv = {dim_k}")
 
         BLOCK_M = cls.BLOCK_M
         BLOCK_N = cls.BLOCK_N
@@ -520,19 +520,19 @@ class _attention(torch.autograd.Function):
             split_k = cls.SPLIT_K
         else:
             # Use heuristics
-            split_k = get_split_k(B, G, H, Mk)
+            split_k = get_split_k(batch_size, group_k, head_k, seqlen_k)
 
-        M_ceil = (M + BLOCK_M - 1) // BLOCK_M * BLOCK_M
-        o_splitk = torch.empty([B * G * H, split_k, M_ceil, Kq], dtype=torch.float32, device=q.device)
-        metadata = torch.empty([B * G * H, 2, split_k, M_ceil], dtype=torch.float32, device=q.device)
-        lse = torch.empty((B * G * H, M), device=q.device, dtype=torch.float32)
-        grid = (triton.cdiv(M, BLOCK_M), B * G * H, split_k)
+        seqlen_q_ceil = (seqlen_q + BLOCK_M - 1) // BLOCK_M * BLOCK_M
+        o_splitk = torch.empty([batch_size * group_q * head_q, split_k, seqlen_q_ceil, dim_q], dtype=torch.float32, device=q.device)
+        metadata = torch.empty([batch_size * group_q * head_q, 2, split_k, seqlen_q_ceil], dtype=torch.float32, device=q.device)
+        lse = torch.empty((batch_size * group_q * head_q, seqlen_q), device=q.device, dtype=torch.float32)
+        grid = (triton.cdiv(seqlen_q, BLOCK_M), batch_size * group_k * head_k, split_k)
 
         num_warps = 1
-        split_size = (Mk + split_k - 1) // split_k
+        split_size = (seqlen_k + split_k - 1) // split_k
         use_seq_len = seq_len is not None
 
-        print(f"B = {B}, G = {G}, H = {H}, split_k = {split_k}, M_ceil = {M_ceil}, Kq = {Kq}, num_of_wgs = {G * G * H * split_k}")
+        print(f"batch_size = {batch_size}, group_q = {group_q}, head_q = {head_q}, split_k = {split_k}, seqlen_q_ceil = {seqlen_q_ceil}, dim_q = {dim_q}, num_of_wgs = {group_q * group_q * head_q * split_k}")
 
         _fwd_kernel_splitK[grid](
             Q=q,
@@ -547,15 +547,15 @@ class _attention(torch.autograd.Function):
             **_strides(v, "vz", "vn", "vg", "vh", "vk"),
             **_strides(o_splitk, "osk_zhg", "osk_s", "osk_m", "osk_k"),
             **_strides(metadata, "mzhg", "m2", "ms", "mm"),
-            Z=B,
-            H=H,
-            G=G,
-            N_CTX_Q=M,
-            N_CTX_K=Mk,
+            Z=batch_size,
+            H=head_q,
+            G=group_q,
+            N_CTX_Q=seqlen_q,
+            N_CTX_K=seqlen_k,
             BLOCK_N_PER_SPLIT=split_size,
             BLOCK_M=BLOCK_M,
             BLOCK_N=BLOCK_N,
-            BLOCK_DMODEL=Lk,
+            BLOCK_DMODEL=dim_k,
             BOUNDS_CHECKS_N=(split_size % BLOCK_N) > 0 or use_seq_len,
             USE_SEQ_LEN=use_seq_len,
             num_warps=num_warps,
@@ -565,43 +565,47 @@ class _attention(torch.autograd.Function):
         )
 
         if mqa_swap_seqlen_head:
-            out = torch.empty((B, H, G, M, Kq), device=q.device, dtype=q.dtype).transpose(1, 3)
+            out = torch.empty((batch_size, head_q, group_q, seqlen_q, dim_q), device=q.device, dtype=q.dtype).transpose(1, 3)
         else:
-            out = torch.empty((B, M, G, H, Kq), device=q.device, dtype=q.dtype)
+            out = torch.empty((batch_size, seqlen_q, group_q, head_q, dim_q), device=q.device, dtype=q.dtype)
 
         # Merge together
         splitK_pow2 = triton.next_power_of_2(split_k)
         use_mask = splitK_pow2 > split_k
-        if B * G * H * M >= 512:
+        if batch_size * group_q * head_q * seqlen_q >= 512:
             k_block_num = 1
         else:
             k_block_num = 2
         assert out.shape[-1] % k_block_num == 0
         k_block_size = out.shape[-1] // k_block_num
-        grid = (B * G * H, M, k_block_num)
+        grid = (batch_size * group_q * head_q, seqlen_q, k_block_num)
         _splitK_reduce[grid](
             o_splitk, metadata, out, lse, **_strides(o_splitk, "osk_zhg", "osk_s", "osk_m", "osk_k"),
             **_strides(metadata, "mzhg", "m2", "ms", "mm"), **_strides(out, "oz", "om", "og", "oh", "ok"),
-            **_strides(lse, "lse_zhg", "lse_m"), M_ceil=M_ceil, BLOCK_SIZE=k_block_size, G=G, H=H,
+            **_strides(lse, "lse_zhg", "lse_m"), M_ceil=seqlen_q_ceil, BLOCK_SIZE=k_block_size, G=group_q, H=head_q,
             # TODO: Tune num_warps
             split_k=split_k, splitK_pow2=splitK_pow2, use_mask=use_mask, num_warps=4)
 
-        lse = lse.reshape([B, G, H, M])
+        lse = lse.reshape([batch_size, group_q, head_q, seqlen_q])
         if mqa_swap_seqlen_head:
             # H/M dimensions have been swapped
             out = out.transpose(1, 3)
             lse = lse.transpose(2, 3)
         if q.ndim == 4:
             # BMGHK -> BMHK
-            assert G == 1
+            assert group_q == 1
             out = out[:, :, 0]
             lse = lse[:, 0]
-        if Mk == 0:
+        if seqlen_k == 0:
             out.zero_()
         if mqa_swap_seqlen_head:
-            out = out.reshape(B, -1, M * G, Kq).transpose(1, 2).contiguous()
+            out = out.reshape(batch_size, -1, seqlen_q * group_q, dim_q).transpose(1, 2).contiguous()
         else:
-            out = out.reshape(B, H * G, -1, Kq).contiguous()
+            out = out.reshape(batch_size, head_q * group_q, -1, dim_q).contiguous()
+
+
+        if input_metadata.layout == "bshd":
+            out=out.permute(0, 2, 1, 3)
 
         return out
 
@@ -616,32 +620,33 @@ def get_input_shapes():
     return cases
 
 
-# @pytest.mark.parametrize('B, Mq, Mkv, Hq, Hkv, K', get_input_shapes())
-@pytest.mark.parametrize('B, Mq, Mkv, Hq, Hkv, K', [[1, 1, 4, 1, 1, 16]])
-def test_op_fwd(B, Mq, Mkv, Hq, Hkv, K, dtype=torch.float16):
+@pytest.mark.parametrize('batch_size, seqlen_q, seqlen_k, Hq, Hkv, dim', get_input_shapes())
+# @pytest.mark.parametrize('batch_size, seqlen_q, seqlen_k, Hq, Hkv, dim', [[3, 1, 4, 2, 2, 16]]) # seq q has to be 1
+def test_op_fwd(batch_size, seqlen_q, seqlen_k, Hq, Hkv, dim, dtype=torch.float16):
     print()
-    print(f"B = {B}, Mq = {Mq}, Mkv = {Mkv}, Hq = {Hq}, Hkv = {Hkv}, K = {K}")
+    print(f"batch_size = {batch_size}, seqlen_q = {seqlen_q}, seqlen_k = {seqlen_k}, Hq = {Hq}, Hkv = {Hkv}, dim = {dim}")
     torch.manual_seed(20)
-    q = (torch.empty((B, Mq, Hkv, (Hq + Hkv - 1) // Hkv, K), dtype=dtype,
+    q = (torch.empty((batch_size, seqlen_q, Hkv, (Hq + Hkv - 1) // Hkv, dim), dtype=dtype,
                      device="cuda").normal_(mean=0., std=0.5).requires_grad_())
-    k = (torch.empty((B, Mkv, Hkv, 1, K), dtype=dtype,
+    k = (torch.empty((batch_size, seqlen_k, Hkv, 1, dim), dtype=dtype,
                      device="cuda").normal_(mean=0.,
                                             std=0.5).requires_grad_()).expand(-1, -1, -1, (Hq + Hkv - 1) // Hkv, -1)
-    v = (torch.empty((B, Mkv, Hkv, 1, K), dtype=dtype,
+    v = (torch.empty((batch_size, seqlen_k, Hkv, 1, dim), dtype=dtype,
                      device="cuda").normal_(mean=0.,
                                             std=0.5).requires_grad_()).expand(-1, -1, -1, (Hq + Hkv - 1) // Hkv, -1)
-    scale = 1 / K**0.5
+    scale = 1 / dim**0.5
 
     print("q:", q.shape)
     print("k:", k.shape)
     print("v:", v.shape)
-    tri_out = attention_decode(q, k, v, scale)
+    input_metadata = MetaData(sm_scale=scale)
+    tri_out = attention_decode(q, k, v, input_metadata)
     print("tri_out:", tri_out.shape)
     print()
 
-    q = q.reshape([B, Mq, -1, K]).permute(0, 2, 1, 3)
-    k = k.reshape([B, Mkv, -1, K]).permute(0, 2, 1, 3)
-    v = v.reshape([B, Mkv, -1, K]).permute(0, 2, 1, 3)
+    q = q.reshape([batch_size, seqlen_q, -1, dim]).permute(0, 2, 1, 3)
+    k = k.reshape([batch_size, seqlen_k, -1, dim]).permute(0, 2, 1, 3)
+    v = v.reshape([batch_size, seqlen_k, -1, dim]).permute(0, 2, 1, 3)
     print("q_ref:", q.shape)
     print("k_ref:", k.shape)
     print("v_ref:", v.shape)

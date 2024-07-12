@@ -2004,9 +2004,9 @@ def test_flash_attn_kvcache(
     device = "cuda"
     # set seed
     torch.random.manual_seed(0)
-    batch_size = 1 # 2
+    batch_size = 3 # 2
     batch_size_cache = batch_size if not has_batch_idx else batch_size * 2
-    nheads = 1 # 6
+    nheads = 2 # 6
     
     if DEBUG:
         print("nheads:", nheads)

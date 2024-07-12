@@ -421,7 +421,6 @@ def fwd_kvcache(
         input_metadata.check_args(q_input, k_input, v_input, out)
 
         tri_out = attention_decode(q_input, k_input, v_input, input_metadata)
-        pass
 
     if DEBUG:
         print()
