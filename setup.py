@@ -25,9 +25,10 @@ from torch.utils.cpp_extension import (
 )
 
 def is_hip():
-    if torch.version.hip is not None:
-        return True
-    return False
+    # if torch.version.hip is not None:
+    #     return True
+    # return False
+    return True
 
 with open("README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
