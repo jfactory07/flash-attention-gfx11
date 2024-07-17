@@ -452,6 +452,7 @@ def get_split_k(B: int, G: int, H: int, Mk: int) -> int:
     split_k = min(split_k, 512)
     split_k = max(split_k, 1)
     return split_k
+
 class _attention(torch.autograd.Function):
 
     OPERATOR = _fwd_kernel_splitK
@@ -489,10 +490,6 @@ class _attention(torch.autograd.Function):
         elif input_metadata.layout == "bsghd":
             pass
 
-        print("q after layout change:", q, q.shape)
-        print("k after layout change:", k, k.shape)
-        print("v after layout change:", v, v.shape)
-
         cls.SPLIT_K: Optional[int] = None
         cls.BLOCK_M = 16
         cls.BLOCK_N = 64
@@ -500,7 +497,10 @@ class _attention(torch.autograd.Function):
         cls.NUM_GROUPS = 1  # Default quantization is row-wise
 
         # attn_bias = inp.attn_bias
-        seq_len = None
+        if input_metadata.cache_seqlens is not None:
+            seq_len = input_metadata.cache_seqlens
+        else:
+            seq_len = None
 
         # Transpose in the case of MQA/GQA
         mqa_swap_seqlen_head = False
@@ -543,6 +543,20 @@ class _attention(torch.autograd.Function):
         use_seq_len = seq_len is not None
 
         print(f"batch_size = {batch_size}, group_q = {group_q}, head_q = {head_q}, split_k = {split_k}, seqlen_q_ceil = {seqlen_q_ceil}, dim_q = {dim_q}, num_of_wgs = {group_q * group_q * head_q * split_k}")
+        
+        if DEBUG:
+            print("q:", q, q.shape)
+            print("k:", k, k.shape)
+            print("v:", v, v.shape)
+            print("sm_scale:", input_metadata.sm_scale)
+            print("o_splitk:", o_splitk, o_splitk.shape)
+            print("metadata:", metadata, metadata.shape)
+            print("seq_len:", seq_len)
+            print("lse:", lse)
+            print("grid:", grid)
+            print("split_size:", split_size)
+            print("use_seq_len:", use_seq_len)
+
 
         _fwd_kernel_splitK[grid](
             Q=q,
@@ -590,11 +604,23 @@ class _attention(torch.autograd.Function):
         k_block_size = out.shape[-1] // k_block_num
         grid = (batch_size * group_q * head_q, seqlen_q, k_block_num)
         _splitK_reduce[grid](
-            o_splitk, metadata, out, lse, **_strides(o_splitk, "osk_zhg", "osk_s", "osk_m", "osk_k"),
-            **_strides(metadata, "mzhg", "m2", "ms", "mm"), **_strides(out, "oz", "om", "og", "oh", "ok"),
-            **_strides(lse, "lse_zhg", "lse_m"), M_ceil=seqlen_q_ceil, BLOCK_SIZE=k_block_size, G=group_q, H=head_q,
+            o_splitk, 
+            metadata, 
+            out, 
+            lse, 
+            **_strides(o_splitk, "osk_zhg", "osk_s", "osk_m", "osk_k"),
+            **_strides(metadata, "mzhg", "m2", "ms", "mm"), 
+            **_strides(out, "oz", "om", "og", "oh", "ok"),
+            **_strides(lse, "lse_zhg", "lse_m"), 
+            M_ceil=seqlen_q_ceil, 
+            BLOCK_SIZE=k_block_size, 
+            G=group_q, 
+            H=head_q,
             # TODO: Tune num_warps
-            split_k=split_k, splitK_pow2=splitK_pow2, use_mask=use_mask, num_warps=4)
+            split_k=split_k, 
+            splitK_pow2=splitK_pow2, 
+            use_mask=use_mask, 
+            num_warps=4)
 
         lse = lse.reshape([batch_size, group_q, head_q, seqlen_q])
         if mqa_swap_seqlen_head:
