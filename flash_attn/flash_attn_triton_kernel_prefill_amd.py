@@ -45,6 +45,8 @@ class MetaData():
     cache_seqlens = None
     new_kv = False
     seqlen_new = None
+    k_new = None
+    v_new = None
     dropout_p, return_encoded_softmax = 0.0, False
 
     def __repr__(self) -> str:
@@ -63,6 +65,8 @@ class MetaData():
                 f"  cache_seqlens={self.cache_seqlens},\n"
                 f"  new_kv={self.new_kv},\n"
                 f"  seqlen_new={self.seqlen_new},\n"
+                f"  k_new={self.k_new},\n"
+                f"  v_new={self.v_new},\n"
                 f"  dropout_p={self.dropout_p},\n"
                 f"  return_encoded_softmax={self.return_encoded_softmax}\n"
                 f")")

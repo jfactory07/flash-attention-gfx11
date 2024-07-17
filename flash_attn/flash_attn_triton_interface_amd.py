@@ -404,23 +404,21 @@ def fwd_kvcache(
         softmax_lse = encoded_softmax
         softmax_p = encoded_softmax
     else:
-        q_input=q
-        k_input=k_cache
-        v_input=v_cache
-
         # fill metadata
         input_metadata = MetaData(sm_scale=softmax_scale)
-        seqlen_q = q_input.shape[1]
-        seqlen_k = k_input.shape[1]
-        input_metadata.max_seqlens_q = seqlen_q
-        input_metadata.max_seqlens_k = seqlen_k
-        input_metadata.layout = "bshd"    
+        input_metadata.layout = "bshd"
+        input_metadata.max_seqlens_q = q.shape[1]
+        input_metadata.max_seqlens_k = k_cache.shape[1]
         input_metadata.cache_seqlens = cache_seqlens
 
-        # Check arguments
-        input_metadata.check_args(q_input, k_input, v_input, out)
-
-        tri_out = attention_decode(q_input, k_input, v_input, input_metadata)
+        if k is not None and v is not None:
+            input_metadata.new_kv = True
+            input_metadata.seqlen_new = k.shape[1]
+            input_metadata.k_new = k
+            input_metadata.v_new = v
+        
+        # launch kernel
+        tri_out = attention_decode(q, k_cache, v_cache, input_metadata)
 
     if DEBUG:
         print()
