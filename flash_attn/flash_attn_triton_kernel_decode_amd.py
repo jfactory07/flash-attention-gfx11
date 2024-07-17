@@ -529,6 +529,8 @@ class _attention(torch.autograd.Function):
         else:
             # Use heuristics
             split_k = get_split_k(batch_size, group_k, head_k, seqlen_k)
+        if DEBUG:
+            print("split_k:", split_k)
 
         seqlen_q_ceil = (seqlen_q + BLOCK_M - 1) // BLOCK_M * BLOCK_M
         o_splitk = torch.empty([batch_size * group_q * head_q, split_k, seqlen_q_ceil, dim_q], dtype=torch.float32, device=q.device)
