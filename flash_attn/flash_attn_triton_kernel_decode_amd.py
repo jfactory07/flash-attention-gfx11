@@ -10,6 +10,9 @@ import triton.language as tl
 DEBUG = True
 
 def _strides(x: torch.Tensor, *stride_names: str):
+    if x is None:
+        return {f"stride_{s}": 0 for i, s in enumerate(stride_names)}
+
     assert x.ndim == len(stride_names)
     return {f"stride_{s}": x.stride(i) for i, s in enumerate(stride_names)}
 
@@ -22,30 +25,42 @@ def _fwd_kernel_splitK(
     sm_scale,
     Out_splitK,  # [B, H, split_k, Mq, K]
     Metadata,  # [B, H, 2, split_k, M_ceil] contains [mi, li]
+    K_new,
+    V_new,
     Seq_len,
     stride_qz,
     stride_qm,
     stride_qg,
     stride_qh,
-    stride_qk,
+    stride_qd,
     stride_kz,
     stride_kn,
     stride_kg,
     stride_kh,
-    stride_kk,
+    stride_kd,
     stride_vz,
     stride_vn,
     stride_vg,
     stride_vh,
-    stride_vk,
+    stride_vd,
     stride_osk_zhg,
     stride_osk_s,
     stride_osk_m,
-    stride_osk_k,
+    stride_osk_d,
     stride_mzhg,
     stride_m2,
     stride_ms,
     stride_mm,
+    stride_kn_z,
+    stride_kn_n,
+    stride_kn_g,
+    stride_kn_h,
+    stride_kn_d,
+    stride_vn_z,
+    stride_vn_n,
+    stride_vn_g,
+    stride_vn_h,
+    stride_vn_d,
     Z,
     N_CTX_Q,
     N_CTX_K,
@@ -57,6 +72,7 @@ def _fwd_kernel_splitK(
     BLOCK_N: tl.constexpr,
     BOUNDS_CHECKS_N: tl.constexpr,
     USE_SEQ_LEN: tl.constexpr,
+    NEW_KV: tl.constexpr,
     PACKED_PER_VAL: tl.constexpr = 1,
     N_GROUPS: tl.constexpr = 1,
 ):
@@ -106,7 +122,7 @@ def _fwd_kernel_splitK(
     Q_block_ptr = tl.make_block_ptr(
         base=Q + off_h * stride_qh + off_z * stride_qz + off_g * stride_qg,
         shape=(N_CTX_Q, D_PER_GROUP),
-        strides=(stride_qm, stride_qk),
+        strides=(stride_qm, stride_qd),
         offsets=(start_m * BLOCK_M, 0),
         block_shape=(BLOCK_M, D_PER_GROUP),
         order=(1, 0),
@@ -116,29 +132,51 @@ def _fwd_kernel_splitK(
     # Additional shift by 1 along the last dimension in the quantized case, since
     # the first element along that dim contains packed quantization coefficients.
     K_block_ptr = tl.make_block_ptr(
-        base=k_base + stride_kk * QUANTIZED * N_GROUPS,
+        base=k_base + stride_kd * QUANTIZED * N_GROUPS,
         shape=(PACKED_D_PER_GROUP, hi),
-        strides=(stride_kk, stride_kn),
+        strides=(stride_kd, stride_kn),
         offsets=(0, lo),
         block_shape=(PACKED_D_PER_GROUP, BLOCK_N),
         order=(0, 1),
     )
     v_base = V + off_h * stride_vh + off_z * stride_vz + off_g * stride_vg
     V_block_ptr = tl.make_block_ptr(
-        base=v_base + stride_vk * QUANTIZED * N_GROUPS,
+        base=v_base + stride_vd * QUANTIZED * N_GROUPS,
         shape=(hi, PACKED_D_PER_GROUP),
-        strides=(stride_vn, stride_vk),
+        strides=(stride_vn, stride_vd),
         offsets=(lo, 0),
         block_shape=(BLOCK_N, PACKED_D_PER_GROUP),
         order=(1, 0),
     )
+
+    if NEW_KV:
+        kn_base = K_new + off_h * stride_kn_h + off_z * stride_kn_z + off_g * stride_kn_g
+        Kn_block_ptr = tl.make_block_ptr(
+            base=kn_base + stride_kn_d * QUANTIZED * N_GROUPS,
+            shape=(PACKED_D_PER_GROUP, hi),
+            strides=(stride_kn_d, stride_kn_n),
+            offsets=(0, lo),
+            block_shape=(PACKED_D_PER_GROUP, BLOCK_N),
+            order=(0, 1),
+            )
+
+        vn_base = V_new + off_h * stride_vn_h + off_z * stride_vn_z + off_g * stride_vn_g
+        Vn_block_ptr = tl.make_block_ptr(
+            base=vn_base + stride_vn_d * QUANTIZED * N_GROUPS,
+            shape=(hi, PACKED_D_PER_GROUP),
+            strides=(stride_vn_n, stride_vn_d),
+            offsets=(lo, 0),
+            block_shape=(BLOCK_N, PACKED_D_PER_GROUP),
+            order=(1, 0),
+        )
+
 
     if QUANTIZED:
         # Pointers to quantization coefficients
         K_scale_shift_block_ptr = tl.make_block_ptr(
             base=k_base,
             shape=(1, hi),
-            strides=(stride_kk, stride_kn),
+            strides=(stride_kd, stride_kn),
             offsets=(0, lo),
             block_shape=(1, BLOCK_N),
             order=(0, 1),
@@ -146,7 +184,7 @@ def _fwd_kernel_splitK(
         V_scale_shift_block_ptr = tl.make_block_ptr(
             base=v_base,
             shape=(hi, 1),
-            strides=(stride_vn, stride_vk),
+            strides=(stride_vn, stride_vd),
             offsets=(lo, 0),
             block_shape=(BLOCK_N, 1),
             order=(1, 0),
@@ -483,13 +521,24 @@ class _attention(torch.autograd.Function):
             q=q.permute(0, 2, 1, 3).unsqueeze(2)
             k=k.permute(0, 2, 1, 3).unsqueeze(2)
             v=v.permute(0, 2, 1, 3).unsqueeze(2)
+            if input_metadata.new_kv:
+                input_metadata.k_new = input_metadata.k_new.permute(0, 2, 1, 3).unsqueeze(2)
+                input_metadata.v_new = input_metadata.v_new.permute(0, 2, 1, 3).unsqueeze(2) 
+                
         elif input_metadata.layout == "bshd":
             q=q.unsqueeze(2)
             k=k.unsqueeze(2)
             v=v.unsqueeze(2)
+
+            if input_metadata.new_kv:
+                input_metadata.k_new = input_metadata.k_new.unsqueeze(2)
+                input_metadata.v_new = input_metadata.v_new.unsqueeze(2) 
         elif input_metadata.layout == "bsghd":
             pass
+        elif input_metadata.layout is None:
+            raise ValueError("Layout not given")
 
+        # context
         cls.SPLIT_K: Optional[int] = None
         cls.BLOCK_M = 16
         cls.BLOCK_N = 64
@@ -528,7 +577,7 @@ class _attention(torch.autograd.Function):
             split_k = cls.SPLIT_K
         else:
             # Use heuristics
-            split_k = get_split_k(batch_size, group_k, head_k, seqlen_k)
+            split_k = get_split_k(batch_size, group_k, head_k, seqlen_k) # NOTE: should the split think about seqlens?
         if DEBUG:
             print("split_k:", split_k)
 
@@ -565,12 +614,16 @@ class _attention(torch.autograd.Function):
             sm_scale=input_metadata.sm_scale,
             Out_splitK=o_splitk,
             Metadata=metadata,
+            K_new = input_metadata.k_new,
+            V_new = input_metadata.v_new,
             Seq_len=seq_len,
-            **_strides(q, "qz", "qm", "qg", "qh", "qk"),
-            **_strides(k, "kz", "kn", "kg", "kh", "kk"),
-            **_strides(v, "vz", "vn", "vg", "vh", "vk"),
-            **_strides(o_splitk, "osk_zhg", "osk_s", "osk_m", "osk_k"),
+            **_strides(q, "qz", "qm", "qg", "qh", "qd"),
+            **_strides(k, "kz", "kn", "kg", "kh", "kd"),
+            **_strides(v, "vz", "vn", "vg", "vh", "vd"),
+            **_strides(o_splitk, "osk_zhg", "osk_s", "osk_m", "osk_d"),
             **_strides(metadata, "mzhg", "m2", "ms", "mm"),
+            **_strides(input_metadata.k_new, "kn_z", "kn_n", "kn_g", "kn_h", "kn_d"),
+            **_strides(input_metadata.v_new, "vn_z", "vn_n", "vn_g", "vn_h", "vn_d"),
             Z=batch_size,
             H=head_q,
             G=group_q,
@@ -582,6 +635,7 @@ class _attention(torch.autograd.Function):
             BLOCK_DMODEL=dim_k,
             BOUNDS_CHECKS_N=(split_size % BLOCK_N) > 0 or use_seq_len,
             USE_SEQ_LEN=use_seq_len,
+            NEW_KV=input_metadata.new_kv,
             num_warps=num_warps,
             num_stages=1,
             PACKED_PER_VAL=PACKED_PER_VAL,
