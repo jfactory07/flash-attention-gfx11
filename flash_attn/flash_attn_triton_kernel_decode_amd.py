@@ -118,6 +118,9 @@ def _fwd_kernel_splitK(
     else:
         kv_len = N_CTX_K
     hi = tl.minimum((splitk_idx + 1) * BLOCK_N_PER_SPLIT, kv_len)
+    print("kv_len:", kv_len)
+    print("lo:", lo)
+    print("hi:", hi)
 
     Q_block_ptr = tl.make_block_ptr(
         base=Q + off_h * stride_qh + off_z * stride_qz + off_g * stride_qg,
@@ -169,6 +172,9 @@ def _fwd_kernel_splitK(
             block_shape=(BLOCK_N, PACKED_D_PER_GROUP),
             order=(1, 0),
         )
+    else:
+        Kn_block_ptr = None
+        Vn_block_ptr = None
 
 
     if QUANTIZED:
@@ -221,6 +227,19 @@ def _fwd_kernel_splitK(
             Q.dtype.element_ty,
             0,
         )
+
+        if NEW_KV:
+            # update kv cache in place
+            group_id = 0
+            # Advance to the current quantization group
+            Kn_block_ptr = tl.advance(Kn_block_ptr, (PACKED_D_PER_GROUP * group_id, 0))
+            Vn_block_ptr = tl.advance(Vn_block_ptr, (0, PACKED_D_PER_GROUP * group_id))
+
+            # -- load k new, v new--
+            k_new = tl.load(Kn_block_ptr, boundary_check=(1, ) if BOUNDS_CHECKS_N else ())
+            v_new = tl.load(Vn_block_ptr, boundary_check=(0, ) if BOUNDS_CHECKS_N else ())
+            print("k_new:", k_new)
+            # print("v_new:", v_new)
 
         # -- compute qk ---
         qk = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32)
