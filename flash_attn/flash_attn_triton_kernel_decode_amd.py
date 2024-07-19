@@ -7,7 +7,7 @@ import sys
 import triton
 import triton.language as tl
 
-DEBUG = True
+DEBUG = False
 
 def _strides(x: torch.Tensor, *stride_names: str):
     if x is None:
