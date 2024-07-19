@@ -88,11 +88,6 @@ headdim_vals = [64, 128]
 dim = 2048
 dropout_p = 0.0
 
-methods = (["Flash2", "Pytorch"]
-           + (["Triton"] if attention_triton is not None else [])
-           + (["xformers.c"] if xops is not None else [])
-           + (["xformers.f"] if xops is not None else []))
-
 time_f = {}
 time_b = {}
 time_f_b = {}
@@ -100,7 +95,13 @@ speed_f = {}
 speed_b = {}
 speed_f_b = {}
 
-def run_benchmark(mode="fwd_bwd"):
+def run_benchmark(methods=None, mode="fwd_bwd"):
+    if methods is None:
+        methods = (["Flash2", "Pytorch"]
+                   + (["Triton"] if attention_triton is not None else [])
+                   + (["xformers.c"] if xops is not None else [])
+                   + (["xformers.f"] if xops is not None else []))
+    
     results = []
 
     for causal in causal_vals:
@@ -244,7 +245,7 @@ def run_benchmark(mode="fwd_bwd"):
     return df
 
 # Run the benchmark
-df_result = run_benchmark("fwd")  # or "bwd" or "fwd_bwd"
+df_result = run_benchmark(methods=["Flash2", "Pytorch"], mode="fwd")  # or "bwd" or "fwd_bwd"
 
 
 # with open('flash2_attn_time.plk', 'wb') as fp:
