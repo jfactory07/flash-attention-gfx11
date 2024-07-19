@@ -66,6 +66,13 @@ def time_fwd_bwd(func, *args, **kwargs):
     time_f, time_b = benchmark_fwd_bwd(func, *args, **kwargs)
     return time_f[1].mean, time_b[1].mean
 
+def time_fwd(func, *args, **kwargs):
+    time_f = benchmark_forward(func, *args, **kwargs)
+    return time_f[1].mean
+
+def time_bwd(func, *args, **kwargs):
+    time_b = benchmark_backward(func, *args, **kwargs)
+    return time_b[1].mean
 
 repeats = 30
 device = 'cuda'
@@ -88,93 +95,179 @@ time_f_b = {}
 speed_f = {}
 speed_b = {}
 speed_f_b = {}
-for causal in causal_vals:
-    for headdim in headdim_vals:
-        for batch_size, seqlen in bs_seqlen_vals:
-            config = (causal, headdim, batch_size, seqlen)
-            nheads = dim // headdim
-            qkv = torch.randn(batch_size, seqlen, 3, nheads, headdim, device=device, dtype=dtype,
-                              requires_grad=True)
-            f, b = time_fwd_bwd(
-                flash_attn_qkvpacked_func, qkv, dropout_p, causal=causal, repeats=repeats, verbose=False
-            )
-            time_f[config, "Flash2"] = f
-            time_b[config, "Flash2"] = b
 
-            try:
-                qkv = qkv.detach().requires_grad_(True)
-                f, b = time_fwd_bwd(
-                    attention_pytorch, qkv, dropout_p, causal=causal, repeats=repeats, verbose=False
-                )
-            except:  # Skip if OOM
-                f, b = float('nan'), float('nan')
-            time_f[config, "Pytorch"] = f
-            time_b[config, "Pytorch"] = b
-
-            if attention_triton is not None:
-                q, k, v = [torch.randn(batch_size, nheads, seqlen, headdim, device=device, dtype=dtype,
-                                    requires_grad=True) for _ in range(3)]
-                # Try both values of sequence_parallel and pick the faster one
-                try:
+def run_benchmark(mode="fwd_bwd"):
+    for causal in causal_vals:
+        for headdim in headdim_vals:
+            for batch_size, seqlen in bs_seqlen_vals:
+                config = (causal, headdim, batch_size, seqlen)
+                nheads = dim // headdim
+                qkv = torch.randn(batch_size, seqlen, 3, nheads, headdim, device=device, dtype=dtype,
+                                  requires_grad=True)
+                if mode == "fwd_bwd":
                     f, b = time_fwd_bwd(
-                        attention_triton, q, k, v, causal, headdim**(-0.5),
-                        False, repeats=repeats, verbose=False
+                        flash_attn_qkvpacked_func, qkv, dropout_p, causal=causal, repeats=repeats, verbose=False
                     )
-                except:
-                    f, b = float('nan'), float('inf')
+                    time_f[config, "Flash2"] = f
+                    time_b[config, "Flash2"] = b
+                elif mode == "fwd":
+                    time_f[config, "Flash2"] = time_fwd(
+                        flash_attn_qkvpacked_func, qkv, dropout_p, causal=causal, repeats=repeats, verbose=False
+                    )
+                elif mode == "bwd":
+                    time_b[config, "Flash2"] = time_bwd(
+                        flash_attn_qkvpacked_func, qkv, dropout_p, causal=causal, repeats=repeats, verbose=False
+                    )
+                else:
+                    raise ValueError(f"Invalid mode: {mode}")
+
                 try:
-                    _, b0 = time_fwd_bwd(
-                        attention_triton, q, k, v, causal, headdim**(-0.5),
-                        True, repeats=repeats, verbose=False
-                    )
-                except:
-                    b0 = float('inf')
-                time_f[config, "Triton"] = f
-                time_b[config, "Triton"] = min(b, b0) if min(b, b0) < float('inf') else float('nan')
+                    qkv = qkv.detach().requires_grad_(True)
+                    if mode == "fwd_bwd":
+                        f, b = time_fwd_bwd(
+                            attention_pytorch, qkv, dropout_p, causal=causal, repeats=repeats, verbose=False
+                        )
+                        time_f[config, "Pytorch"] = f
+                        time_b[config, "Pytorch"] = b
+                    elif mode == "fwd":
+                        time_f[config, "Pytorch"] = time_fwd(
+                            attention_pytorch, qkv, dropout_p, causal=causal, repeats=repeats, verbose=False
+                        )
+                    elif mode == "bwd":
+                        time_b[config, "Pytorch"] = time_bwd(
+                            attention_pytorch, qkv, dropout_p, causal=causal, repeats=repeats, verbose=False
+                        )
+                except:  # Skip if OOM
+                    if mode == "fwd_bwd":
+                        time_f[config, "Pytorch"] = float('nan')
+                        time_b[config, "Pytorch"] = float('nan')
+                    elif mode == "fwd":
+                        time_f[config, "Pytorch"] = float('nan')
+                    elif mode == "bwd":
+                        time_b[config, "Pytorch"] = float('nan')
 
-            if xops is not None:
-                q, k, v = [torch.randn(batch_size, seqlen, nheads, headdim, device=device, dtype=dtype,
-                                    requires_grad=True) for _ in range(3)]
-                f, b = time_fwd_bwd(
-                    xops.memory_efficient_attention, q, k, v,
-                    attn_bias=xops.LowerTriangularMask() if causal else None,
-                    op=(xops.fmha.cutlass.FwOp, xops.fmha.cutlass.BwOp)
-                )
-                time_f[config, "xformers.c"] = f
-                time_b[config, "xformers.c"] = b
+                if attention_triton is not None:
+                    q, k, v = [torch.randn(batch_size, nheads, seqlen, headdim, device=device, dtype=dtype,
+                                        requires_grad=True) for _ in range(3)]
+                    # Try both values of sequence_parallel and pick the faster one
+                    try:
+                        if mode == "fwd_bwd":
+                            f, b = time_fwd_bwd(
+                                attention_triton, q, k, v, causal, headdim**(-0.5),
+                                False, repeats=repeats, verbose=False
+                            )
+                            time_f[config, "Triton"] = f
+                            time_b[config, "Triton"] = b
+                        elif mode == "fwd":
+                            time_f[config, "Triton"] = time_fwd(
+                                attention_triton, q, k, v, causal, headdim**(-0.5),
+                                False, repeats=repeats, verbose=False
+                            )
+                        elif mode == "bwd":
+                            time_b[config, "Triton"] = time_bwd(
+                                attention_triton, q, k, v, causal, headdim**(-0.5),
+                                False, repeats=repeats, verbose=False
+                            )
+                    except:
+                        if mode in ["fwd_bwd", "fwd"]:
+                            time_f[config, "Triton"] = float('nan')
+                        if mode in ["fwd_bwd", "bwd"]:
+                            time_b[config, "Triton"] = float('inf')
+                    if mode == "fwd_bwd":
+                        try:
+                            _, b0 = time_fwd_bwd(
+                                attention_triton, q, k, v, causal, headdim**(-0.5),
+                                True, repeats=repeats, verbose=False
+                            )
+                        except:
+                            b0 = float('inf')
+                        time_b[config, "Triton"] = min(time_b[config, "Triton"], b0)
 
-            if xops is not None:
-                q, k, v = [torch.randn(batch_size, seqlen, nheads, headdim, device=device, dtype=dtype,
-                                    requires_grad=True) for _ in range(3)]
-                f, b = time_fwd_bwd(
-                    xops.memory_efficient_attention, q, k, v,
-                    attn_bias=xops.LowerTriangularMask() if causal else None,
-                    op=(xops.fmha.flash.FwOp, xops.fmha.flash.BwOp)
-                )
-                time_f[config, "xformers.f"] = f
-                time_b[config, "xformers.f"] = b
+                if xops is not None:
+                    q, k, v = [torch.randn(batch_size, seqlen, nheads, headdim, device=device, dtype=dtype,
+                                        requires_grad=True) for _ in range(3)]
+                    if mode == "fwd_bwd":
+                        f, b = time_fwd_bwd(
+                            xops.memory_efficient_attention, q, k, v,
+                            attn_bias=xops.LowerTriangularMask() if causal else None,
+                            op=(xops.fmha.cutlass.FwOp, xops.fmha.cutlass.BwOp)
+                        )
+                        time_f[config, "xformers.c"] = f
+                        time_b[config, "xformers.c"] = b
+                    elif mode == "fwd":
+                        time_f[config, "xformers.c"] = time_fwd(
+                            xops.memory_efficient_attention, q, k, v,
+                            attn_bias=xops.LowerTriangularMask() if causal else None,
+                            op=(xops.fmha.cutlass.FwOp, xops.fmha.cutlass.BwOp)
+                        )
+                    elif mode == "bwd":
+                        time_b[config, "xformers.c"] = time_bwd(
+                            xops.memory_efficient_attention, q, k, v,
+                            attn_bias=xops.LowerTriangularMask() if causal else None,
+                            op=(xops.fmha.cutlass.FwOp, xops.fmha.cutlass.BwOp)
+                        )
 
-            print(f"### causal={causal}, headdim={headdim}, batch_size={batch_size}, seqlen={seqlen} ###")
-            for method in methods:
-                time_f_b[config, method] = time_f[config, method] + time_b[config, method]
-                speed_f[config, method] = efficiency(
-                    flops(batch_size, seqlen, headdim, nheads, causal, mode="fwd"),
-                    time_f[config, method]
-                )
-                speed_b[config, method] = efficiency(
-                    flops(batch_size, seqlen, headdim, nheads, causal, mode="bwd"),
-                    time_b[config, method]
-                )
-                speed_f_b[config, method] = efficiency(
-                    flops(batch_size, seqlen, headdim, nheads, causal, mode="fwd_bwd"),
-                    time_f_b[config, method]
-                )
-                print(
-                    f"{method} fwd: {speed_f[config, method]:.2f} TFLOPs/s, "
-                    f"bwd: {speed_b[config, method]:.2f} TFLOPs/s, "
-                    f"fwd + bwd: {speed_f_b[config, method]:.2f} TFLOPs/s"
-                )
+                if xops is not None:
+                    q, k, v = [torch.randn(batch_size, seqlen, nheads, headdim, device=device, dtype=dtype,
+                                        requires_grad=True) for _ in range(3)]
+                    if mode == "fwd_bwd":
+                        f, b = time_fwd_bwd(
+                            xops.memory_efficient_attention, q, k, v,
+                            attn_bias=xops.LowerTriangularMask() if causal else None,
+                            op=(xops.fmha.flash.FwOp, xops.fmha.flash.BwOp)
+                        )
+                        time_f[config, "xformers.f"] = f
+                        time_b[config, "xformers.f"] = b
+                    elif mode == "fwd":
+                        time_f[config, "xformers.f"] = time_fwd(
+                            xops.memory_efficient_attention, q, k, v,
+                            attn_bias=xops.LowerTriangularMask() if causal else None,
+                            op=(xops.fmha.flash.FwOp, xops.fmha.flash.BwOp)
+                        )
+                    elif mode == "bwd":
+                        time_b[config, "xformers.f"] = time_bwd(
+                            xops.memory_efficient_attention, q, k, v,
+                            attn_bias=xops.LowerTriangularMask() if causal else None,
+                            op=(xops.fmha.flash.FwOp, xops.fmha.flash.BwOp)
+                        )
 
+                print(f"### causal={causal}, headdim={headdim}, batch_size={batch_size}, seqlen={seqlen} ###")
+                for method in methods:
+                    if mode == "fwd_bwd":
+                        time_f_b[config, method] = time_f[config, method] + time_b[config, method]
+                        speed_f[config, method] = efficiency(
+                            flops(batch_size, seqlen, headdim, nheads, causal, mode="fwd"),
+                            time_f[config, method]
+                        )
+                        speed_b[config, method] = efficiency(
+                            flops(batch_size, seqlen, headdim, nheads, causal, mode="bwd"),
+                            time_b[config, method]
+                        )
+                        speed_f_b[config, method] = efficiency(
+                            flops(batch_size, seqlen, headdim, nheads, causal, mode="fwd_bwd"),
+                            time_f_b[config, method]
+                        )
+                        print(
+                            f"{method} fwd: {speed_f[config, method]:.2f} TFLOPs/s, "
+                            f"bwd: {speed_b[config, method]:.2f} TFLOPs/s, "
+                            f"fwd + bwd: {speed_f_b[config, method]:.2f} TFLOPs/s"
+                        )
+                    elif mode == "fwd":
+                        speed_f[config, method] = efficiency(
+                            flops(batch_size, seqlen, headdim, nheads, causal, mode="fwd"),
+                            time_f[config, method]
+                        )
+                        print(f"{method} fwd: {speed_f[config, method]:.2f} TFLOPs/s")
+                    elif mode == "bwd":
+                        speed_b[config, method] = efficiency(
+                            flops(batch_size, seqlen, headdim, nheads, causal, mode="bwd"),
+                            time_b[config, method]
+                        )
+                        print(f"{method} bwd: {speed_b[config, method]:.2f} TFLOPs/s")
+
+
+
+run_benchmark("fwd")
 
 # with open('flash2_attn_time.plk', 'wb') as fp:
 #     pickle.dump((speed_f, speed_b, speed_f_b), fp, protocol=pickle.HIGHEST_PROTOCOL)
