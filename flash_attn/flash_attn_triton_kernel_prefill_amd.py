@@ -868,10 +868,6 @@ def _attn_bwd(Q, K, V, sm_scale, alibi_slopes, DO, DQ, DK, DV, M, D,
     dq *= LN2
     tl.store(DQ_block_ptr, dq.to(q.dtype))
 
-
-empty = torch.empty(128, device="cuda")
-
-
 def get_shape_from_layout(q, k, metadata):
     if metadata.layout == 'thd':
         nheads_q, nheads_k = q.shape[1], k.shape[1]
