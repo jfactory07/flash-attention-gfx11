@@ -3,6 +3,7 @@
 import pickle
 import math
 import argparse
+import sys
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -94,10 +95,9 @@ def run_benchmark(args):
     time_f, time_b, speed_f, speed_b = {}, {}, {}, {}
 
     for causal in args.causal:
-        for headdim in args.headdim:
+        for headdim, nheads in zip(args.headdim, args.nheads):
             for batch_size, seqlen in zip(args.batch_size, args.seqlen):
                 config = (causal, headdim, batch_size, seqlen)
-                nheads = args.dim // headdim
                 qkv = torch.randn(batch_size, seqlen, 3, nheads, headdim, device=device, dtype=dtype,
                                   requires_grad=True)
                 
@@ -235,9 +235,9 @@ if __name__ == "__main__":
                         help="Data type for the tensors")
     parser.add_argument("--causal", nargs="+", type=lambda x: x.lower() == 'true', default=[False, True],
                         help="Whether to use causal attention")
-    parser.add_argument("--headdim", nargs="+", type=int, default=[64, 128],
-                        help="Dimension of each attention head")
     parser.add_argument("--dim", type=int, default=2048, help="Total dimension of the model")
+    parser.add_argument("--nheads", nargs="+", type=int, help="Number of attention heads")
+    parser.add_argument("--headdim", nargs="+", type=int, default=[64, 128], help="Dimension(s) of each attention head")
     parser.add_argument("--batch_size", nargs="+", type=int, default=[32, 16, 8, 4, 2, 1],
                         help="Batch sizes to benchmark")
     parser.add_argument("--seqlen", nargs="+", type=int, default=[512, 1024, 2048, 4096, 8192, 16384],
@@ -246,5 +246,41 @@ if __name__ == "__main__":
     parser.add_argument("--repeats", type=int, default=30, help="Number of repetitions for each benchmark")
 
     args = parser.parse_args()
-    
+
+    # Check if all three parameters are provided
+    if args.dim != parser.get_default('dim') and args.nheads is not None and args.headdim != parser.get_default('headdim'):
+        print("Error: You have provided values for dim, nheads, and headdim. Please provide at most two of these parameters.")
+        sys.exit(1)
+
+    # Validate and adjust arguments
+    if args.nheads is not None:
+        if args.dim != parser.get_default('dim'):
+            print(f"Running benchmark with dim={args.dim}, nheads={args.nheads}")
+            args.headdim = [args.dim // nh for nh in args.nheads]
+            print(f"Calculated headdim: {args.headdim}")
+            # Check if any calculated headdim is 0
+            if any(hd == 0 for hd in args.headdim):
+                print("Error: Some number of heads are larger than the total dimension. Please adjust your input.")
+                sys.exit(1)
+        else:
+            print(f"Running benchmark with nheads={args.nheads}, headdim={args.headdim}")
+            args.dim = max(nh * hd for nh, hd in zip(args.nheads, args.headdim))
+    elif args.dim != parser.get_default('dim'):
+        print(f"Running benchmark with dim={args.dim}, headdim={args.headdim}")
+        args.nheads = [args.dim // hd for hd in args.headdim]
+        print(f"Calculated nheads: {args.nheads}")
+        # Check if any calculated nheads is 0
+        if any(nh == 0 for nh in args.nheads):
+            print("Error: Some head dimensions are larger than the total dimension. Please adjust your input.")
+            sys.exit(1)
+    else:
+        print(f"Running benchmark with default dim={args.dim}, headdim={args.headdim}")
+        args.nheads = [args.dim // hd for hd in args.headdim]
+        print(f"Calculated nheads: {args.nheads}")
+
+    # Ensure nheads and headdim have the same length
+    if len(args.nheads) != len(args.headdim):
+        print("Error: The number of values for nheads and headdim must be the same.")
+        sys.exit(1)
+
     results = run_benchmark(args)
