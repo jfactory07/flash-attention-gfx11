@@ -112,7 +112,7 @@ def run_benchmark(methods=None, mode="fwd_bwd"):
                 qkv = torch.randn(batch_size, seqlen, 3, nheads, headdim, device=device, dtype=dtype,
                                   requires_grad=True)
                 
-                row = {'Causal': causal, 'Head Dim': headdim, 'Batch Size': batch_size, 'Seq Len': seqlen}
+                row = {'Causal': causal, 'Dim of Head': headdim, "Num of Heads": nheads, 'Batch Size': batch_size, 'Seq Len': seqlen}
                 
                 for method in methods:
                     if method == "Flash2":
@@ -206,7 +206,7 @@ def run_benchmark(methods=None, mode="fwd_bwd"):
                 
                 results.append(row)
                 
-                print(f"### causal={causal}, headdim={headdim}, batch_size={batch_size}, seqlen={seqlen} ###")
+                print(f"### causal={causal}, headdim={headdim}, nheads: {nheads}, batch_size={batch_size}, seqlen={seqlen} ###")
                 for method in methods:
                     if mode == "fwd_bwd":
                         print(
@@ -223,7 +223,7 @@ def run_benchmark(methods=None, mode="fwd_bwd"):
     df = pd.DataFrame(results)
 
     # Reorder columns
-    column_order = ['Causal', 'Head Dim', 'Batch Size', 'Seq Len']
+    column_order = ['Causal', 'Dim of Head', "Num of Heads", 'Batch Size', 'Seq Len']
     for method in methods:
         if mode in ["fwd_bwd", "fwd"]:
             column_order.append(f'{method} fwd (TFLOPs/s)')
