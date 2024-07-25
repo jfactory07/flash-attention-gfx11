@@ -410,6 +410,7 @@ def fwd_kvcache(
         input_metadata.max_seqlens_q = q.shape[1]
         input_metadata.max_seqlens_k = k_cache.shape[1]
         input_metadata.cache_seqlens = cache_seqlens
+        input_metadata.cache_batch_idx = cache_batch_idx
 
         if k is not None and v is not None:
             input_metadata.new_kv = True

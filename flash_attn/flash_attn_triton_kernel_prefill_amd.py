@@ -43,6 +43,7 @@ class MetaData():
     varlen = False
     layout = None
     cache_seqlens = None
+    cache_batch_idx = None
     new_kv = False
     seqlen_new = None
     k_new = None
@@ -63,6 +64,7 @@ class MetaData():
                 f"  varlen={self.varlen},\n"
                 f"  layout={self.layout},\n"
                 f"  cache_seqlens={self.cache_seqlens},\n"
+                f"  cache_batch_idx={self.cache_batch_idx},\n"
                 f"  new_kv={self.new_kv},\n"
                 f"  seqlen_new={self.seqlen_new},\n"
                 f"  k_new={self.k_new},\n"

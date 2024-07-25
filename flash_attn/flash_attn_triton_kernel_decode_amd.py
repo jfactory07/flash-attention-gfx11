@@ -27,7 +27,8 @@ def _fwd_kernel_splitK(
     Metadata,  # [B, H, 2, split_k, M_ceil] contains [mi, li]
     K_new,
     V_new,
-    Seq_len,
+    Cache_seqlens,
+    Cache_batch_idx,
     stride_qz,
     stride_qm,
     stride_qg,
@@ -72,7 +73,8 @@ def _fwd_kernel_splitK(
     BLOCK_DMODEL: tl.constexpr,
     BLOCK_N: tl.constexpr,
     BOUNDS_CHECKS_N: tl.constexpr,
-    USE_SEQ_LEN: tl.constexpr,
+    USE_CACHE_SEQLENs: tl.constexpr,
+    USE_CACHE_BATCH_IDX: tl.constexpr,
     NEW_KV: tl.constexpr,
     PACKED_PER_VAL: tl.constexpr = 1,
     N_GROUPS: tl.constexpr = 1,
@@ -113,9 +115,16 @@ def _fwd_kernel_splitK(
     off_g = off_zhg % G
     splitk_idx = tl.program_id(2)
 
+    # pick batch index
+    if USE_CACHE_BATCH_IDX:
+        cache_batch_idx = tl.load(Cache_batch_idx + off_z)
+    else:
+        cache_batch_idx = off_z
+
+
     lo = splitk_idx * BLOCK_N_PER_SPLIT
-    if USE_SEQ_LEN:
-        cache_seqlen_last_idx = tl.load(Seq_len + off_z)
+    if USE_CACHE_SEQLENs:
+        cache_seqlen_last_idx = tl.load(Cache_seqlens + off_z)
         if NEW_KV:
             kv_len = cache_seqlen_last_idx + N_CTX_NEW
         else:
@@ -128,15 +137,18 @@ def _fwd_kernel_splitK(
     # print("hi:", hi)
 
     # calculate base offset
-    k_base = K + off_h * stride_kh + off_z * stride_kz + off_g * stride_kg
-    v_base = V + off_h * stride_vh + off_z * stride_vz + off_g * stride_vg
+    k_base = K + off_h * stride_kh + cache_batch_idx * stride_kz + off_g * stride_kg
+    v_base = V + off_h * stride_vh + cache_batch_idx * stride_vz + off_g * stride_vg
 
     # Copy new Keys and Values into Cache
     if NEW_KV:
         kn_base = K_new + off_h * stride_kn_h + off_z * stride_kn_z + off_g * stride_kn_g
         
         # Determine the starting position for new data in the cache
-        start_idx = tl.load(Seq_len + off_z) if USE_SEQ_LEN else N_CTX_K - N_CTX_NEW
+        if USE_CACHE_SEQLENs:
+            start_idx = tl.load(Cache_seqlens + off_z)
+        else:
+            start_idx = N_CTX_K - N_CTX_NEW
 
         # Copy new Keys
         for i in range(0, N_CTX_NEW, BLOCK_N):
@@ -179,11 +191,6 @@ def _fwd_kernel_splitK(
                 mask=(tl.arange(0, BLOCK_N)[:, None] + i < N_CTX_NEW)
             )
 
-
-    else:
-        Kn_block_ptr = None
-        Vn_block_ptr = None        
-
     Q_block_ptr = tl.make_block_ptr(
         base=Q + off_h * stride_qh + off_z * stride_qz + off_g * stride_qg,
         shape=(N_CTX_Q, D_PER_GROUP),
@@ -211,8 +218,6 @@ def _fwd_kernel_splitK(
         block_shape=(BLOCK_N, PACKED_D_PER_GROUP),
         order=(1, 0),
     )
-
-
 
     if QUANTIZED:
         # Pointers to quantization coefficients
@@ -596,9 +601,9 @@ class _attention(torch.autograd.Function):
 
         # attn_bias = inp.attn_bias
         if input_metadata.cache_seqlens is not None:
-            seq_len = input_metadata.cache_seqlens
+            cache_seqlens = input_metadata.cache_seqlens
         else:
-            seq_len = None
+            cache_seqlens = None
 
         # Transpose in the case of MQA/GQA
         mqa_swap_seqlen_head = False
@@ -638,7 +643,7 @@ class _attention(torch.autograd.Function):
 
         num_warps = 1
         split_size = (seqlen_k + split_k - 1) // split_k
-        use_seq_len = seq_len is not None
+        use_cache_seqlens = cache_seqlens is not None
 
         print(f"batch_size = {batch_size}, group_q = {group_q}, head_q = {head_q}, split_k = {split_k}, seqlen_q_ceil = {seqlen_q_ceil}, dim_q = {dim_q}, num_of_wgs = {group_q * group_q * head_q * split_k}")
         
@@ -649,11 +654,11 @@ class _attention(torch.autograd.Function):
             print("sm_scale:", input_metadata.sm_scale)
             print("o_splitk:", o_splitk, o_splitk.shape)
             print("metadata:", metadata, metadata.shape)
-            print("seq_len:", seq_len)
+            print("cache_seqlens:", cache_seqlens)
             print("lse:", lse)
             print("grid:", grid)
             print("split_size:", split_size)
-            print("use_seq_len:", use_seq_len)
+            print("use_cache_seqlens:", use_cache_seqlens)
 
 
         _fwd_kernel_splitK[grid](
@@ -665,7 +670,8 @@ class _attention(torch.autograd.Function):
             Metadata=metadata,
             K_new = input_metadata.k_new,
             V_new = input_metadata.v_new,
-            Seq_len=seq_len,
+            Cache_seqlens=cache_seqlens,
+            Cache_batch_idx=input_metadata.cache_batch_idx,
             **_strides(q, "qz", "qm", "qg", "qh", "qd"),
             **_strides(k, "kz", "kn", "kg", "kh", "kd"),
             **_strides(v, "vz", "vn", "vg", "vh", "vd"),
@@ -683,8 +689,9 @@ class _attention(torch.autograd.Function):
             BLOCK_M=BLOCK_M,
             BLOCK_N=BLOCK_N,
             BLOCK_DMODEL=dim_k,
-            BOUNDS_CHECKS_N=(split_size % BLOCK_N) > 0 or use_seq_len,
-            USE_SEQ_LEN=use_seq_len,
+            BOUNDS_CHECKS_N=(split_size % BLOCK_N) > 0 or use_cache_seqlens,
+            USE_CACHE_SEQLENs=use_cache_seqlens,
+            USE_CACHE_BATCH_IDX= input_metadata.cache_batch_idx is not None,
             NEW_KV=input_metadata.new_kv,
             num_warps=num_warps,
             num_stages=1,
