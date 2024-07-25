@@ -7,7 +7,7 @@ import sys
 import triton
 import triton.language as tl
 
-DEBUG = False
+DEBUG = True
 
 def _strides(x: torch.Tensor, *stride_names: str):
     if x is None:
@@ -64,6 +64,7 @@ def _fwd_kernel_splitK(
     Z,
     N_CTX_Q,
     N_CTX_K,
+    N_CTX_NEW,
     BLOCK_N_PER_SPLIT,
     H: tl.constexpr,
     G: tl.constexpr,
@@ -114,13 +115,99 @@ def _fwd_kernel_splitK(
 
     lo = splitk_idx * BLOCK_N_PER_SPLIT
     if USE_SEQ_LEN:
-        kv_len = tl.load(Seq_len + off_z)
+        cache_seqlen_last_idx = tl.load(Seq_len + off_z)
+        kv_len = cache_seqlen_last_idx + 1
     else:
         kv_len = N_CTX_K
+        cache_seqlen_last_idx = kv_len - 1
     hi = tl.minimum((splitk_idx + 1) * BLOCK_N_PER_SPLIT, kv_len)
-    print("kv_len:", kv_len)
-    print("lo:", lo)
-    print("hi:", hi)
+    # print("kv_len:", kv_len)
+    # print("lo:", lo)
+    # print("hi:", hi)
+
+    # calculate base offset
+    k_base = K + off_h * stride_kh + off_z * stride_kz + off_g * stride_kg
+    v_base = V + off_h * stride_vh + off_z * stride_vz + off_g * stride_vg
+
+    # Copy new Keys and Values into Cache
+    if NEW_KV:
+        kn_base = K_new + off_h * stride_kn_h + off_z * stride_kn_z + off_g * stride_kn_g
+        hi_n = N_CTX_NEW
+        lo_n = 0
+
+        # Copy new Keys
+        Kn_block_ptr = tl.make_block_ptr(
+            base=kn_base + stride_kn_d * QUANTIZED * N_GROUPS,
+            shape=(PACKED_D_PER_GROUP, hi_n),
+            strides=(stride_kn_d, stride_kn_n),
+            offsets=(0, lo_n),
+            block_shape=(PACKED_D_PER_GROUP, BLOCK_N),
+            order=(0, 1),
+            )
+        
+        # Create a block pointer for the destination in K
+        K_dest_ptr = tl.make_block_ptr(
+            base=k_base + stride_kd * QUANTIZED * N_GROUPS,
+            shape=(PACKED_D_PER_GROUP, N_CTX_K),
+            strides=(stride_kd, stride_kn),
+            offsets=(0, cache_seqlen_last_idx),
+            block_shape=(PACKED_D_PER_GROUP, BLOCK_N),
+            order=(0, 1),
+        )
+
+        # Copy new key values to K
+        for i in range(0, N_CTX_NEW, BLOCK_N):
+            # Load from K_new
+            k_new_block = tl.load(Kn_block_ptr, boundary_check=(1,))
+            print("k_new_block:", k_new_block)
+            
+            # Store to K
+            tl.store(K_dest_ptr, k_new_block, boundary_check=(1,))
+            
+            # Advance pointers
+            Kn_block_ptr = tl.advance(Kn_block_ptr, (0, BLOCK_N))
+            K_dest_ptr = tl.advance(K_dest_ptr, (0, BLOCK_N))
+
+
+
+        # Copy new Values
+        vn_base = V_new + off_h * stride_vn_h + off_z * stride_vn_z + off_g * stride_vn_g
+        Vn_block_ptr = tl.make_block_ptr(
+            base=vn_base + stride_vn_d * QUANTIZED * N_GROUPS,
+            shape=(hi_n, PACKED_D_PER_GROUP),
+            strides=(stride_vn_n, stride_vn_d),
+            offsets=(lo_n, 0),
+            block_shape=(BLOCK_N, PACKED_D_PER_GROUP),
+            order=(1, 0),
+        )
+
+        # write this
+        # Create a block pointer for the destination in V
+        V_dest_ptr = tl.make_block_ptr(
+            base=v_base + stride_vd * QUANTIZED * N_GROUPS,
+            shape=(N_CTX_K, PACKED_D_PER_GROUP),
+            strides=(stride_vn, stride_vd),
+            offsets=(cache_seqlen_last_idx, 0),
+            block_shape=(BLOCK_N, PACKED_D_PER_GROUP),
+            order=(1, 0),
+        )
+
+        # Copy new value values to V
+        for i in range(0, N_CTX_NEW, BLOCK_N):
+            # Load from V_new
+            v_new_block = tl.load(Vn_block_ptr, boundary_check=(0,))
+            
+            # Store to V
+            tl.store(V_dest_ptr, v_new_block, boundary_check=(0,))
+            
+            # Advance pointers
+            Vn_block_ptr = tl.advance(Vn_block_ptr, (BLOCK_N, 0))
+            V_dest_ptr = tl.advance(V_dest_ptr, (BLOCK_N, 0))
+
+
+    else:
+        Kn_block_ptr = None
+        Vn_block_ptr = None        
 
     Q_block_ptr = tl.make_block_ptr(
         base=Q + off_h * stride_qh + off_z * stride_qz + off_g * stride_qg,
@@ -131,7 +218,6 @@ def _fwd_kernel_splitK(
         order=(1, 0),
     )
 
-    k_base = K + off_h * stride_kh + off_z * stride_kz + off_g * stride_kg
     # Additional shift by 1 along the last dimension in the quantized case, since
     # the first element along that dim contains packed quantization coefficients.
     K_block_ptr = tl.make_block_ptr(
@@ -142,7 +228,6 @@ def _fwd_kernel_splitK(
         block_shape=(PACKED_D_PER_GROUP, BLOCK_N),
         order=(0, 1),
     )
-    v_base = V + off_h * stride_vh + off_z * stride_vz + off_g * stride_vg
     V_block_ptr = tl.make_block_ptr(
         base=v_base + stride_vd * QUANTIZED * N_GROUPS,
         shape=(hi, PACKED_D_PER_GROUP),
@@ -152,29 +237,6 @@ def _fwd_kernel_splitK(
         order=(1, 0),
     )
 
-    if NEW_KV:
-        kn_base = K_new + off_h * stride_kn_h + off_z * stride_kn_z + off_g * stride_kn_g
-        Kn_block_ptr = tl.make_block_ptr(
-            base=kn_base + stride_kn_d * QUANTIZED * N_GROUPS,
-            shape=(PACKED_D_PER_GROUP, hi),
-            strides=(stride_kn_d, stride_kn_n),
-            offsets=(0, lo),
-            block_shape=(PACKED_D_PER_GROUP, BLOCK_N),
-            order=(0, 1),
-            )
-
-        vn_base = V_new + off_h * stride_vn_h + off_z * stride_vn_z + off_g * stride_vn_g
-        Vn_block_ptr = tl.make_block_ptr(
-            base=vn_base + stride_vn_d * QUANTIZED * N_GROUPS,
-            shape=(hi, PACKED_D_PER_GROUP),
-            strides=(stride_vn_n, stride_vn_d),
-            offsets=(lo, 0),
-            block_shape=(BLOCK_N, PACKED_D_PER_GROUP),
-            order=(1, 0),
-        )
-    else:
-        Kn_block_ptr = None
-        Vn_block_ptr = None
 
 
     if QUANTIZED:
@@ -216,6 +278,9 @@ def _fwd_kernel_splitK(
 
     # loop over k, v and update accumulator
     for start_n in range(lo, hi, BLOCK_N):
+        print("start_n:", start_n)
+        print("BLOCK_N:", BLOCK_N)
+
         k, v = load_dequantize_k_v_group(
             K_block_ptr,
             V_block_ptr,
@@ -227,19 +292,6 @@ def _fwd_kernel_splitK(
             Q.dtype.element_ty,
             0,
         )
-
-        if NEW_KV:
-            # update kv cache in place
-            group_id = 0
-            # Advance to the current quantization group
-            Kn_block_ptr = tl.advance(Kn_block_ptr, (PACKED_D_PER_GROUP * group_id, 0))
-            Vn_block_ptr = tl.advance(Vn_block_ptr, (0, PACKED_D_PER_GROUP * group_id))
-
-            # -- load k new, v new--
-            k_new = tl.load(Kn_block_ptr, boundary_check=(1, ) if BOUNDS_CHECKS_N else ())
-            v_new = tl.load(Vn_block_ptr, boundary_check=(0, ) if BOUNDS_CHECKS_N else ())
-            print("k_new:", k_new)
-            # print("v_new:", v_new)
 
         # -- compute qk ---
         qk = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32)
@@ -313,6 +365,9 @@ def load_dequantize_k_v_group(
     # -- load k, v --
     k = tl.load(K_block_ptr, boundary_check=(1, ) if BOUNDS_CHECKS_N else ())
     v = tl.load(V_block_ptr, boundary_check=(0, ) if BOUNDS_CHECKS_N else ())
+
+    print("k:", k)
+    print("v:", v)
 
     if PACKED_PER_VAL > 1:
         # K/V are quantized, load quantization coefficients and dequantize
@@ -648,6 +703,7 @@ class _attention(torch.autograd.Function):
             G=group_q,
             N_CTX_Q=seqlen_q,
             N_CTX_K=seqlen_k,
+            N_CTX_NEW=input_metadata.k_new.shape[1],
             BLOCK_N_PER_SPLIT=split_size,
             BLOCK_M=BLOCK_M,
             BLOCK_N=BLOCK_N,
