@@ -116,10 +116,12 @@ def _fwd_kernel_splitK(
     lo = splitk_idx * BLOCK_N_PER_SPLIT
     if USE_SEQ_LEN:
         cache_seqlen_last_idx = tl.load(Seq_len + off_z)
-        kv_len = cache_seqlen_last_idx + 1
+        if NEW_KV:
+            kv_len = cache_seqlen_last_idx + N_CTX_NEW
+        else:
+            kv_len = cache_seqlen_last_idx
     else:
         kv_len = N_CTX_K
-        cache_seqlen_last_idx = kv_len - 1
     hi = tl.minimum((splitk_idx + 1) * BLOCK_N_PER_SPLIT, kv_len)
     # print("kv_len:", kv_len)
     # print("lo:", lo)
@@ -676,7 +678,7 @@ class _attention(torch.autograd.Function):
             G=group_q,
             N_CTX_Q=seqlen_q,
             N_CTX_K=seqlen_k,
-            N_CTX_NEW=input_metadata.k_new.shape[1],
+            N_CTX_NEW=input_metadata.k_new.shape[1] if input_metadata.new_kv else None,
             BLOCK_N_PER_SPLIT=split_size,
             BLOCK_M=BLOCK_M,
             BLOCK_N=BLOCK_N,
