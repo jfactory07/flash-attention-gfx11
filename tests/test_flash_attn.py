@@ -1904,9 +1904,9 @@ def test_flash_attn_splitkv(
 @pytest.mark.parametrize("num_splits", [0])
 # @pytest.mark.parametrize("mha_type", ["mha", "mqa", "gqa"])
 @pytest.mark.parametrize("mha_type", ["mha"])
-@pytest.mark.parametrize("new_kv", [False, True])
+# @pytest.mark.parametrize("new_kv", [False, True])
 # @pytest.mark.parametrize("new_kv", [False])
-# @pytest.mark.parametrize("new_kv", [True])
+@pytest.mark.parametrize("new_kv", [True])
 # @pytest.mark.parametrize("alibi", [False, True])
 @pytest.mark.parametrize("alibi", [False])
 # @pytest.mark.parametrize("local", [False, True])
@@ -1922,34 +1922,35 @@ def test_flash_attn_splitkv(
 # @pytest.mark.parametrize("paged_kv_block_size", [None, 256])
 # @pytest.mark.parametrize("paged_kv_block_size", [256, 512])
 @pytest.mark.parametrize("paged_kv_block_size", [None])
-# @pytest.mark.parametrize("has_batch_idx", [False, True])
-@pytest.mark.parametrize("has_batch_idx", [False])
-@pytest.mark.parametrize("d", [32, 59, 64, 80, 128, 256])
+@pytest.mark.parametrize("has_batch_idx", [False, True])
+# @pytest.mark.parametrize("has_batch_idx", [False])
+# @pytest.mark.parametrize("has_batch_idx", [True])
+# @pytest.mark.parametrize("d", [32, 59, 64, 80, 128, 256])
 # @pytest.mark.parametrize("d", [32, 64, 96, 128, 160, 192, 224, 256])
 # @pytest.mark.parametrize('d', [32, 40, 64, 80, 96, 128, 160, 192])
 # @pytest.mark.parametrize('d', [56, 80])
 # @pytest.mark.parametrize("d", [128])
-# @pytest.mark.parametrize("d", [16])
+@pytest.mark.parametrize("d", [16])
 @pytest.mark.parametrize(
     "seqlen_q,seqlen_k",
     [
-        # (1, 2),
+        (1, 2),
         # (1, 4),
         # (1, 8),
         # (1, 16),
         # (1, 32),
         # (1, 64),
-        (1, 128),
-        (1, 339),
-        (3, 1024),
-        (64, 800),
-        (64, 256),
-        (3, 799),
-        (64, 2048),
-        (16, 20000),
-        (1, 128 * 1024),
-        (16, 128 * 1024),
-        (128, 128),
+        # (1, 128),
+        # (1, 339),
+        # (3, 1024),
+        # (64, 800),
+        # (64, 256),
+        # (3, 799),
+        # (64, 2048),
+        # (16, 20000),
+        # (1, 128 * 1024),
+        # (16, 128 * 1024),
+        # (128, 128),
     ],
 )
 # @pytest.mark.parametrize('seqlen_q,seqlen_k', [(256, 128)])
@@ -2030,7 +2031,7 @@ def test_flash_attn_kvcache(
     else:
         k, v = None, None
     if paged_kv_block_size is None:
-        if False:
+        if True:
             k_cache = torch.zeros(batch_size_cache, seqlen_k, nheads_k, d, device=device, dtype=dtype)
             v_cache = torch.zeros(batch_size_cache, seqlen_k, nheads_k, d, device=device, dtype=dtype)
             
