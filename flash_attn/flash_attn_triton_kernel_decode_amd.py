@@ -132,77 +132,50 @@ def _fwd_kernel_splitK(
     # Copy new Keys and Values into Cache
     if NEW_KV:
         kn_base = K_new + off_h * stride_kn_h + off_z * stride_kn_z + off_g * stride_kn_g
-        hi_n = N_CTX_NEW
-        lo_n = 0
+        
+        # Determine the starting position for new data in the cache
+        start_idx = tl.load(Seq_len + off_z) if USE_SEQ_LEN else N_CTX_K - N_CTX_NEW
 
         # Copy new Keys
-        Kn_block_ptr = tl.make_block_ptr(
-            base=kn_base + stride_kn_d * QUANTIZED * N_GROUPS,
-            shape=(PACKED_D_PER_GROUP, hi_n),
-            strides=(stride_kn_d, stride_kn_n),
-            offsets=(0, lo_n),
-            block_shape=(PACKED_D_PER_GROUP, BLOCK_N),
-            order=(0, 1),
-            )
-        
-        # Create a block pointer for the destination in K
-        K_dest_ptr = tl.make_block_ptr(
-            base=k_base + stride_kd * QUANTIZED * N_GROUPS,
-            shape=(PACKED_D_PER_GROUP, N_CTX_K),
-            strides=(stride_kd, stride_kn),
-            offsets=(0, cache_seqlen_last_idx),
-            block_shape=(PACKED_D_PER_GROUP, BLOCK_N),
-            order=(0, 1),
-        )
-
-        # Copy new key values to K
         for i in range(0, N_CTX_NEW, BLOCK_N):
             # Load from K_new
-            k_new_block = tl.load(Kn_block_ptr, boundary_check=(1,))
-            print("k_new_block:", k_new_block)
+            k_new_block = tl.load(
+                kn_base + stride_kn_d * QUANTIZED * N_GROUPS + 
+                tl.arange(0, PACKED_D_PER_GROUP)[:, None] * stride_kn_d +
+                (tl.arange(0, BLOCK_N) + i)[None, :] * stride_kn_n,
+                mask=(tl.arange(0, BLOCK_N)[None, :] + i < N_CTX_NEW),
+                other=0
+            )
             
             # Store to K
-            tl.store(K_dest_ptr, k_new_block, boundary_check=(1,))
-            
-            # Advance pointers
-            Kn_block_ptr = tl.advance(Kn_block_ptr, (0, BLOCK_N))
-            K_dest_ptr = tl.advance(K_dest_ptr, (0, BLOCK_N))
-
-
+            tl.store(
+                k_base + stride_kd * QUANTIZED * N_GROUPS + 
+                tl.arange(0, PACKED_D_PER_GROUP)[:, None] * stride_kd +
+                (tl.arange(0, BLOCK_N) + i + start_idx)[None, :] * stride_kn,
+                k_new_block,
+                mask=(tl.arange(0, BLOCK_N)[None, :] + i < N_CTX_NEW)
+            )
 
         # Copy new Values
         vn_base = V_new + off_h * stride_vn_h + off_z * stride_vn_z + off_g * stride_vn_g
-        Vn_block_ptr = tl.make_block_ptr(
-            base=vn_base + stride_vn_d * QUANTIZED * N_GROUPS,
-            shape=(hi_n, PACKED_D_PER_GROUP),
-            strides=(stride_vn_n, stride_vn_d),
-            offsets=(lo_n, 0),
-            block_shape=(BLOCK_N, PACKED_D_PER_GROUP),
-            order=(1, 0),
-        )
-
-        # write this
-        # Create a block pointer for the destination in V
-        V_dest_ptr = tl.make_block_ptr(
-            base=v_base + stride_vd * QUANTIZED * N_GROUPS,
-            shape=(N_CTX_K, PACKED_D_PER_GROUP),
-            strides=(stride_vn, stride_vd),
-            offsets=(cache_seqlen_last_idx, 0),
-            block_shape=(BLOCK_N, PACKED_D_PER_GROUP),
-            order=(1, 0),
-        )
-
-        # Copy new value values to V
         for i in range(0, N_CTX_NEW, BLOCK_N):
             # Load from V_new
-            v_new_block = tl.load(Vn_block_ptr, boundary_check=(0,))
+            v_new_block = tl.load(
+                vn_base + stride_vn_d * QUANTIZED * N_GROUPS + 
+                (tl.arange(0, BLOCK_N) + i)[:, None] * stride_vn_n +
+                tl.arange(0, PACKED_D_PER_GROUP)[None, :] * stride_vn_d,
+                mask=(tl.arange(0, BLOCK_N)[:, None] + i < N_CTX_NEW),
+                other=0
+            )
             
             # Store to V
-            tl.store(V_dest_ptr, v_new_block, boundary_check=(0,))
-            
-            # Advance pointers
-            Vn_block_ptr = tl.advance(Vn_block_ptr, (BLOCK_N, 0))
-            V_dest_ptr = tl.advance(V_dest_ptr, (BLOCK_N, 0))
+            tl.store(
+                v_base + stride_vd * QUANTIZED * N_GROUPS + 
+                (tl.arange(0, BLOCK_N) + i + start_idx)[:, None] * stride_vn +
+                tl.arange(0, PACKED_D_PER_GROUP)[None, :] * stride_vd,
+                v_new_block,
+                mask=(tl.arange(0, BLOCK_N)[:, None] + i < N_CTX_NEW)
+            )
 
 
     else:
@@ -278,8 +251,8 @@ def _fwd_kernel_splitK(
 
     # loop over k, v and update accumulator
     for start_n in range(lo, hi, BLOCK_N):
-        print("start_n:", start_n)
-        print("BLOCK_N:", BLOCK_N)
+        # print("start_n:", start_n)
+        # print("BLOCK_N:", BLOCK_N)
 
         k, v = load_dequantize_k_v_group(
             K_block_ptr,
@@ -366,8 +339,8 @@ def load_dequantize_k_v_group(
     k = tl.load(K_block_ptr, boundary_check=(1, ) if BOUNDS_CHECKS_N else ())
     v = tl.load(V_block_ptr, boundary_check=(0, ) if BOUNDS_CHECKS_N else ())
 
-    print("k:", k)
-    print("v:", v)
+    # print("k:", k)
+    # print("v:", v)
 
     if PACKED_PER_VAL > 1:
         # K/V are quantized, load quantization coefficients and dequantize
