@@ -1904,6 +1904,8 @@ def test_flash_attn_splitkv(
 @pytest.mark.parametrize("num_splits", [0])
 # @pytest.mark.parametrize("mha_type", ["mha", "mqa", "gqa"])
 @pytest.mark.parametrize("mha_type", ["mha"])
+# @pytest.mark.parametrize("mha_type", ["mqa"])
+# @pytest.mark.parametrize("mha_type", ["gqa"])
 @pytest.mark.parametrize("new_kv", [False, True])
 # @pytest.mark.parametrize("new_kv", [False])
 # @pytest.mark.parametrize("new_kv", [True])
@@ -2010,7 +2012,7 @@ def test_flash_attn_kvcache(
     device = "cuda"
     # set seed
     torch.random.manual_seed(0)
-    batch_size = 2
+    batch_size = 2 # 2
     batch_size_cache = batch_size if not has_batch_idx else batch_size * 2
     nheads = 1 # 6
     

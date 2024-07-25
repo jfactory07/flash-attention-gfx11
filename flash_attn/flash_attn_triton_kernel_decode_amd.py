@@ -605,25 +605,30 @@ class _attention(torch.autograd.Function):
         else:
             cache_seqlens = None
 
+        # dims
+        batch_size, seqlen_q, group_q, head_q, dim_q = q.shape
+        _, seqlen_k, group_k, head_k, dim_k = k.shape
+        _, seqlen_v, group_v, head_v, dim_v = k.shape
+
         # Transpose in the case of MQA/GQA
         mqa_swap_seqlen_head = False
-        if k.shape[3] > 1 and k.stride(3) == 0 and v.stride(3) == 0:
+        if head_k > 1 and k.stride(3) == 0 and v.stride(3) == 0:
             mqa_swap_seqlen_head = True
-            assert q.shape[1] == 1
+            assert seqlen_q == 1
             q = q.transpose(1, 3)
             k = k[:, :, :, :1]
             v = v[:, :, :, :1]
         print("mqa_swap_seqlen_head:", mqa_swap_seqlen_head)
 
-        batch_size, seqlen_k, group_k, head_k, dim_k = k.shape
+        # Update dim_k if Quantized
         PACKED_PER_VAL = 1
         if k.dtype == torch.int32:
             # Quantized K/V
             PACKED_PER_VAL = 8
-            dim_k = (k.shape[-1] - cls.NUM_GROUPS) * 8
-        batch_size, seqlen_q, group_q, head_q, dim_q = q.shape
+            dim_k = (dim_k - cls.NUM_GROUPS) * 8
+
         assert dim_k == dim_q, f"Keys have head dim {dim_k} but queries have head dim {dim_q}"
-        print(f"batch_size = {batch_size}, seqlen_q = {seqlen_q}, seqlen_k = {seqlen_k}, head_q = {head_q}, head_k = {head_k}, dim_q = {dim_q}, dim_kv = {dim_k}")
+        print(f"batch_size = {batch_size}, seqlen_q = {seqlen_q}, seqlen_k = {seqlen_k}, head_q = {head_q}, head_k = {head_k}, dim_q = {dim_q}, dim_k = {dim_k}")
 
         BLOCK_M = cls.BLOCK_M
         BLOCK_N = cls.BLOCK_N
