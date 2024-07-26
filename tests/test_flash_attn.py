@@ -1903,11 +1903,12 @@ def test_flash_attn_splitkv(
 # @pytest.mark.parametrize("num_splits", [1, 0])
 @pytest.mark.parametrize("num_splits", [0])
 # @pytest.mark.parametrize("mha_type", ["mha", "mqa", "gqa"])
-# @pytest.mark.parametrize("mha_type", ["mha"])
-@pytest.mark.parametrize("mha_type", ["mqa"])
+# @pytest.mark.parametrize("mha_type", ["mha", "mqa"])
+@pytest.mark.parametrize("mha_type", ["mha"])
+# @pytest.mark.parametrize("mha_type", ["mqa"])
 # @pytest.mark.parametrize("mha_type", ["gqa"])
-# @pytest.mark.parametrize("new_kv", [False, True])
-@pytest.mark.parametrize("new_kv", [False])
+@pytest.mark.parametrize("new_kv", [False, True])
+# @pytest.mark.parametrize("new_kv", [False])
 # @pytest.mark.parametrize("new_kv", [True])
 # @pytest.mark.parametrize("alibi", [False, True])
 @pytest.mark.parametrize("alibi", [False])
@@ -1924,35 +1925,39 @@ def test_flash_attn_splitkv(
 # @pytest.mark.parametrize("paged_kv_block_size", [None, 256])
 # @pytest.mark.parametrize("paged_kv_block_size", [256, 512])
 @pytest.mark.parametrize("paged_kv_block_size", [None])
-# @pytest.mark.parametrize("has_batch_idx", [False, True])
-@pytest.mark.parametrize("has_batch_idx", [False])
+@pytest.mark.parametrize("has_batch_idx", [False, True])
+# @pytest.mark.parametrize("has_batch_idx", [False])
 # @pytest.mark.parametrize("has_batch_idx", [True])
-# @pytest.mark.parametrize("d", [32, 59, 64, 80, 128, 256])
+@pytest.mark.parametrize("d", [32, 59, 64, 80, 128, 256])
 # @pytest.mark.parametrize("d", [32, 64, 96, 128, 160, 192, 224, 256])
 # @pytest.mark.parametrize('d', [32, 40, 64, 80, 96, 128, 160, 192])
 # @pytest.mark.parametrize('d', [56, 80])
 # @pytest.mark.parametrize("d", [128])
-@pytest.mark.parametrize("d", [16])
+# @pytest.mark.parametrize("d", [16])
 @pytest.mark.parametrize(
     "seqlen_q,seqlen_k",
-    [
-        (1, 2),
+    [  
+        # (1, 1),
+        # (1, 2),
+        # (2, 2),
+        # (2, 4),
+        # (4, 2),
         # (1, 4),
         # (1, 8),
         # (1, 16),
         # (1, 32),
         # (1, 64),
-        # (1, 128),
-        # (1, 339),
-        # (3, 1024),
-        # (64, 800),
-        # (64, 256),
-        # (3, 799),
-        # (64, 2048),
-        # (16, 20000),
-        # (1, 128 * 1024),
-        # (16, 128 * 1024),
-        # (128, 128),
+        (1, 128),
+        (1, 339),
+        (3, 1024),
+        (64, 800),
+        (64, 256),
+        (3, 799),
+        (64, 2048),
+        (16, 20000),
+        (1, 128 * 1024),
+        (16, 128 * 1024),
+        (128, 128),
     ],
 )
 # @pytest.mark.parametrize('seqlen_q,seqlen_k', [(256, 128)])
@@ -2012,20 +2017,20 @@ def test_flash_attn_kvcache(
     device = "cuda"
     # set seed
     torch.random.manual_seed(0)
-    batch_size = 1 # 2
+    batch_size = 2 # 2
     batch_size_cache = batch_size if not has_batch_idx else batch_size * 2
-    nheads = 2 # 6
+    nheads_q = 6 # 6
     
     if DEBUG:
-        print("nheads:", nheads)
+        print("nheads_q:", nheads_q)
         print("batch_size:", batch_size)
 
     # rotary_dim must be a multiple of 16, and must be <= d
     rotary_dim = math.floor(int(rotary_fraction * d) / 16) * 16
-    nheads_k = nheads if mha_type == "mha" else (1 if mha_type == "mqa" else 3)
-    assert nheads % nheads_k == 0
+    nheads_k = nheads_q if mha_type == "mha" else (1 if mha_type == "mqa" else 3)
+    assert nheads_q % nheads_k == 0
     window_size = (-1, -1) if not local else torch.randint(0, seqlen_k, (2,))
-    q = torch.randn(batch_size, seqlen_q, nheads, d, device=device, dtype=dtype)
+    q = torch.randn(batch_size, seqlen_q, nheads_q, d, device=device, dtype=dtype)
     seqlen_new = seqlen_q if seqlen_new_eq_seqlen_q else torch.randint(1, seqlen_q + 1, (1,)).item()
     if new_kv:
         k = torch.randn(batch_size, seqlen_new, nheads_k, d, device=device, dtype=dtype)
@@ -2033,13 +2038,14 @@ def test_flash_attn_kvcache(
     else:
         k, v = None, None
     if paged_kv_block_size is None:
+        # Increasing Cache
         if False:
             k_cache = torch.zeros(batch_size_cache, seqlen_k, nheads_k, d, device=device, dtype=dtype)
             v_cache = torch.zeros(batch_size_cache, seqlen_k, nheads_k, d, device=device, dtype=dtype)
             
-            for i in range(seqlen_k):
-                k_cache[:, i, :, :] = torch.full((batch_size_cache, nheads_k, d), i + 1, device=device, dtype=dtype)
-                v_cache[:, i, :, :] = torch.full((batch_size_cache, nheads_k, d), i + 1, device=device, dtype=dtype)
+            for i in range(nheads_k):
+                k_cache[:, :, i, :] = torch.full((batch_size_cache, seqlen_k, d), i + 1, device=device, dtype=dtype)
+                v_cache[:, :, i, :] = torch.full((batch_size_cache, seqlen_k, d), i + 1, device=device, dtype=dtype)
     
         else:
             k_cache = torch.randn(batch_size_cache, seqlen_k, nheads_k, d, device=device, dtype=dtype)
@@ -2095,7 +2101,7 @@ def test_flash_attn_kvcache(
         print("cache_batch_idx:", cache_batch_idx)
 
     if alibi:
-        alibi_slopes = torch.rand(batch_size, nheads, device=device, dtype=torch.float32) * 0.3
+        alibi_slopes = torch.rand(batch_size, nheads_q, device=device, dtype=torch.float32) * 0.3
         attn_bias = attn_bias_from_alibi_slopes(
             alibi_slopes, seqlen_q, seqlen_k, None, key_padding_mask, causal=causal
         )
@@ -2150,8 +2156,8 @@ def test_flash_attn_kvcache(
         )
         k_cache_ref[update_mask] = rearrange(k_ro, "b s ... -> (b s) ...")
         v_cache_ref[update_mask] = rearrange(v, "b s ... -> (b s) ...")
-    k_cache_rep = repeat(k_cache_ref, "b s h d -> b s (h g) d", g=nheads // nheads_k)
-    v_cache_rep = repeat(v_cache_ref, "b s h d -> b s (h g) d", g=nheads // nheads_k)
+    k_cache_rep = repeat(k_cache_ref, "b s h d -> b s (h g) d", g=nheads_q // nheads_k)
+    v_cache_rep = repeat(v_cache_ref, "b s h d -> b s (h g) d", g=nheads_q // nheads_k)
     out = flash_attn_with_kvcache(
         q,
         k_cache if paged_kv_block_size is None else k_cache_paged,

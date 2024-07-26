@@ -77,14 +77,14 @@ def _fwd_kernel_splitK(
     USE_CACHE_BATCH_IDX: tl.constexpr,
     NEW_KV: tl.constexpr,
     PACKED_PER_VAL: tl.constexpr = 1,
-    N_GROUPS: tl.constexpr = 1,
+    N_QUANT_GROUPS: tl.constexpr = 1,
 ):
     """This kernel can accept non-quantized or int4-quantized keys/values.
     PACKED_PER_VAL determines the quantization type:
         - PACKED_PER_VAL == 1 means no quantization
         - PACKED_PER_VAL == 8 means 4-bit quantization (8 packed quantized values inside one int32)
     For the quantized case K/V should be int32 tensors.
-    Quantization can be row-wise (when N_GROUPS = 1) or group-wise with N_GROUPS = 2, 4, or 8.
+    Quantization can be row-wise (when N_QUANT_GROUPS = 1) or group-wise with N_QUANT_GROUPS = 2, 4, or 8.
     Quantization coefficients are stored at the beginning of the row along the last dimension of K/V
     So K[B, H, M, :] has a form
     [   quant_coef0, quant_coef1, ...|
@@ -100,13 +100,13 @@ def _fwd_kernel_splitK(
         f"the quantized case: {PACKED_PER_VAL=} {tl.constexpr(K.dtype)=} {tl.constexpr(K.dtype.element_ty)=}",
     )
     tl.static_assert(
-        (((N_GROUPS == 1 or N_GROUPS == 2) or N_GROUPS == 4) or N_GROUPS == 8),
+        (((N_QUANT_GROUPS == 1 or N_QUANT_GROUPS == 2) or N_QUANT_GROUPS == 4) or N_QUANT_GROUPS == 8),
         "Number of quantization groups can be 1 (row-wise quantization), 2, 4, or 8.",
     )
 
     QUANTIZED: tl.constexpr = PACKED_PER_VAL > 1
-    PACKED_D_PER_GROUP: tl.constexpr = BLOCK_DMODEL // PACKED_PER_VAL // N_GROUPS
-    D_PER_GROUP: tl.constexpr = BLOCK_DMODEL // N_GROUPS
+    PACKED_D_PER_GROUP: tl.constexpr = BLOCK_DMODEL // PACKED_PER_VAL // N_QUANT_GROUPS
+    D_PER_GROUP: tl.constexpr = BLOCK_DMODEL // N_QUANT_GROUPS
 
     start_m = tl.program_id(0)
     off_zhg = tl.program_id(1)
@@ -154,7 +154,7 @@ def _fwd_kernel_splitK(
         for i in range(0, N_CTX_NEW, BLOCK_N):
             # Load from K_new
             k_new_block = tl.load(
-                kn_base + stride_kn_d * QUANTIZED * N_GROUPS + 
+                kn_base + stride_kn_d * QUANTIZED * N_QUANT_GROUPS + 
                 tl.arange(0, PACKED_D_PER_GROUP)[:, None] * stride_kn_d +
                 (tl.arange(0, BLOCK_N) + i)[None, :] * stride_kn_n,
                 mask=(tl.arange(0, BLOCK_N)[None, :] + i < N_CTX_NEW),
@@ -163,7 +163,7 @@ def _fwd_kernel_splitK(
             
             # Store to K
             tl.store(
-                k_base + stride_kd * QUANTIZED * N_GROUPS + 
+                k_base + stride_kd * QUANTIZED * N_QUANT_GROUPS + 
                 tl.arange(0, PACKED_D_PER_GROUP)[:, None] * stride_kd +
                 (tl.arange(0, BLOCK_N) + i + start_idx)[None, :] * stride_kn,
                 k_new_block,
@@ -175,7 +175,7 @@ def _fwd_kernel_splitK(
         for i in range(0, N_CTX_NEW, BLOCK_N):
             # Load from V_new
             v_new_block = tl.load(
-                vn_base + stride_vn_d * QUANTIZED * N_GROUPS + 
+                vn_base + stride_vn_d * QUANTIZED * N_QUANT_GROUPS + 
                 (tl.arange(0, BLOCK_N) + i)[:, None] * stride_vn_n +
                 tl.arange(0, PACKED_D_PER_GROUP)[None, :] * stride_vn_d,
                 mask=(tl.arange(0, BLOCK_N)[:, None] + i < N_CTX_NEW),
@@ -184,7 +184,7 @@ def _fwd_kernel_splitK(
             
             # Store to V
             tl.store(
-                v_base + stride_vd * QUANTIZED * N_GROUPS + 
+                v_base + stride_vd * QUANTIZED * N_QUANT_GROUPS + 
                 (tl.arange(0, BLOCK_N) + i + start_idx)[:, None] * stride_vn +
                 tl.arange(0, PACKED_D_PER_GROUP)[None, :] * stride_vd,
                 v_new_block,
@@ -203,7 +203,7 @@ def _fwd_kernel_splitK(
     # Additional shift by 1 along the last dimension in the quantized case, since
     # the first element along that dim contains packed quantization coefficients.
     K_block_ptr = tl.make_block_ptr(
-        base=k_base + stride_kd * QUANTIZED * N_GROUPS,
+        base=k_base + stride_kd * QUANTIZED * N_QUANT_GROUPS,
         shape=(PACKED_D_PER_GROUP, hi),
         strides=(stride_kd, stride_kn),
         offsets=(0, lo),
@@ -211,7 +211,7 @@ def _fwd_kernel_splitK(
         order=(0, 1),
     )
     V_block_ptr = tl.make_block_ptr(
-        base=v_base + stride_vd * QUANTIZED * N_GROUPS,
+        base=v_base + stride_vd * QUANTIZED * N_QUANT_GROUPS,
         shape=(hi, PACKED_D_PER_GROUP),
         strides=(stride_vn, stride_vd),
         offsets=(lo, 0),
@@ -570,34 +570,55 @@ class _attention(torch.autograd.Function):
             print("v:", v, v.shape)
             print("input_metadata:", input_metadata)
 
+        original_layout = input_metadata.layout
+
         # kernels expects "bsghd"
-        if input_metadata.layout == "bhsd":
-            q=q.permute(0, 2, 1, 3).unsqueeze(2)
-            k=k.permute(0, 2, 1, 3).unsqueeze(2)
-            v=v.permute(0, 2, 1, 3).unsqueeze(2)
-            if input_metadata.new_kv:
-                input_metadata.k_new = input_metadata.k_new.permute(0, 2, 1, 3).unsqueeze(2)
-                input_metadata.v_new = input_metadata.v_new.permute(0, 2, 1, 3).unsqueeze(2) 
-                
-        elif input_metadata.layout == "bshd":
+        if input_metadata.layout == "bshd":
             q=q.unsqueeze(2)
             k=k.unsqueeze(2)
             v=v.unsqueeze(2)
 
             if input_metadata.new_kv:
                 input_metadata.k_new = input_metadata.k_new.unsqueeze(2)
-                input_metadata.v_new = input_metadata.v_new.unsqueeze(2) 
+                input_metadata.v_new = input_metadata.v_new.unsqueeze(2)
+
+            input_metadata.layout = "bsghd"
+        elif input_metadata.layout == "bhsd":
+            q=q.permute(0, 2, 1, 3).unsqueeze(2)
+            k=k.permute(0, 2, 1, 3).unsqueeze(2)
+            v=v.permute(0, 2, 1, 3).unsqueeze(2)
+            if input_metadata.new_kv:
+                input_metadata.k_new = input_metadata.k_new.permute(0, 2, 1, 3).unsqueeze(2)
+                input_metadata.v_new = input_metadata.v_new.permute(0, 2, 1, 3).unsqueeze(2)
+
+
+            input_metadata.layout = "bsghd"
         elif input_metadata.layout == "bsghd":
             pass
         elif input_metadata.layout is None:
             raise ValueError("Layout not given")
+
+        assert input_metadata.layout == "bsghd"
+
+        # get dims
+        batch_size, seqlen_q, group_q, heads_per_group_q, dim_q = q.shape
+        _, seqlen_k, group_k, heads_per_group_k, dim_k = k.shape
+        _, seqlen_v, quant_group_v, head_v, dim_v = k.shape
+
+        # Handle MQA case
+        # if heads_per_group_k == 1 and heads_per_group_q > 1:
+        #     print("MQA")
+        #     k = k.expand(-1, -1, -1, heads_per_group_q, -1)
+        #     v = v.expand(-1, -1, -1, heads_per_group_q, -1)
+        #     heads_per_group_k = heads_per_group_q
+        #     head_v = heads_per_group_q
 
         # context
         cls.SPLIT_K: Optional[int] = None
         cls.BLOCK_M = 16
         cls.BLOCK_N = 64
 
-        cls.NUM_GROUPS = 1  # Default quantization is row-wise
+        cls.NUM_QUANT_GROUPS = 1  # Default quantization is row-wise
 
         # attn_bias = inp.attn_bias
         if input_metadata.cache_seqlens is not None:
@@ -605,30 +626,26 @@ class _attention(torch.autograd.Function):
         else:
             cache_seqlens = None
 
-        # dims
-        batch_size, seqlen_q, group_q, head_q, dim_q = q.shape
-        _, seqlen_k, group_k, head_k, dim_k = k.shape
-        _, seqlen_v, group_v, head_v, dim_v = k.shape
-
         # Transpose in the case of MQA/GQA
         mqa_swap_seqlen_head = False
-        if head_k > 1 and k.stride(3) == 0 and v.stride(3) == 0:
+        if heads_per_group_k > 1 and k.stride(3) == 0 and v.stride(3) == 0:
             mqa_swap_seqlen_head = True
             assert seqlen_q == 1
-            q = q.transpose(1, 3)
-            k = k[:, :, :, :1]
-            v = v[:, :, :, :1]
+            # q = q.transpose(1, 3)
+            # k = k[:, :, :, :1]
+            # v = v[:, :, :, :1]
         print("mqa_swap_seqlen_head:", mqa_swap_seqlen_head)
+        assert mqa_swap_seqlen_head == False
 
         # Update dim_k if Quantized
         PACKED_PER_VAL = 1
         if k.dtype == torch.int32:
             # Quantized K/V
             PACKED_PER_VAL = 8
-            dim_k = (dim_k - cls.NUM_GROUPS) * 8
+            dim_k = (dim_k - cls.NUM_QUANT_GROUPS) * 8
 
         assert dim_k == dim_q, f"Keys have head dim {dim_k} but queries have head dim {dim_q}"
-        print(f"batch_size = {batch_size}, seqlen_q = {seqlen_q}, seqlen_k = {seqlen_k}, head_q = {head_q}, head_k = {head_k}, dim_q = {dim_q}, dim_k = {dim_k}")
+        print(f"batch_size = {batch_size}, seqlen_q = {seqlen_q}, seqlen_k = {seqlen_k}, heads_per_group_q = {heads_per_group_q}, heads_per_group_k = {heads_per_group_k}, dim_q = {dim_q}, dim_k = {dim_k}")
 
         BLOCK_M = cls.BLOCK_M
         BLOCK_N = cls.BLOCK_N
@@ -636,21 +653,21 @@ class _attention(torch.autograd.Function):
             split_k = cls.SPLIT_K
         else:
             # Use heuristics
-            split_k = get_split_k(batch_size, group_k, head_k, seqlen_k) # NOTE: should the split think about seqlens?
+            split_k = get_split_k(batch_size, group_k, heads_per_group_k, seqlen_k) # NOTE: should the split think about seqlens?
         if DEBUG:
             print("split_k:", split_k)
 
         seqlen_q_ceil = (seqlen_q + BLOCK_M - 1) // BLOCK_M * BLOCK_M
-        o_splitk = torch.empty([batch_size * group_q * head_q, split_k, seqlen_q_ceil, dim_q], dtype=torch.float32, device=q.device)
-        metadata = torch.empty([batch_size * group_q * head_q, 2, split_k, seqlen_q_ceil], dtype=torch.float32, device=q.device)
-        lse = torch.empty((batch_size * group_q * head_q, seqlen_q), device=q.device, dtype=torch.float32)
-        grid = (triton.cdiv(seqlen_q, BLOCK_M), batch_size * group_k * head_k, split_k)
+        o_splitk = torch.empty([batch_size * group_q * heads_per_group_q, split_k, seqlen_q_ceil, dim_q], dtype=torch.float32, device=q.device)
+        metadata = torch.empty([batch_size * group_q * heads_per_group_q, 2, split_k, seqlen_q_ceil], dtype=torch.float32, device=q.device)
+        lse = torch.empty((batch_size * group_q * heads_per_group_q, seqlen_q), device=q.device, dtype=torch.float32)
+        grid = (triton.cdiv(seqlen_q, BLOCK_M), batch_size * group_k * heads_per_group_k, split_k)
 
         num_warps = 1
         split_size = (seqlen_k + split_k - 1) // split_k
         use_cache_seqlens = cache_seqlens is not None
 
-        print(f"batch_size = {batch_size}, group_q = {group_q}, head_q = {head_q}, split_k = {split_k}, seqlen_q_ceil = {seqlen_q_ceil}, dim_q = {dim_q}, num_of_wgs = {group_q * group_q * head_q * split_k}")
+        print(f"batch_size = {batch_size}, group_q = {group_q}, heads_per_group_q = {heads_per_group_q}, split_k = {split_k}, seqlen_q_ceil = {seqlen_q_ceil}, dim_q = {dim_q}, num_of_wgs = {group_q * group_q * heads_per_group_q * split_k}")
         
         if DEBUG:
             print("q:", q, q.shape)
@@ -685,7 +702,7 @@ class _attention(torch.autograd.Function):
             **_strides(input_metadata.k_new, "kn_z", "kn_n", "kn_g", "kn_h", "kn_d"),
             **_strides(input_metadata.v_new, "vn_z", "vn_n", "vn_g", "vn_h", "vn_d"),
             Z=batch_size,
-            H=head_q,
+            H=heads_per_group_q,
             G=group_q,
             N_CTX_Q=seqlen_q,
             N_CTX_K=seqlen_k,
@@ -701,24 +718,24 @@ class _attention(torch.autograd.Function):
             num_warps=num_warps,
             num_stages=1,
             PACKED_PER_VAL=PACKED_PER_VAL,
-            N_GROUPS=cls.NUM_GROUPS if PACKED_PER_VAL > 1 else 1,
+            N_QUANT_GROUPS=cls.NUM_QUANT_GROUPS if PACKED_PER_VAL > 1 else 1,
         )
 
         if mqa_swap_seqlen_head:
-            out = torch.empty((batch_size, head_q, group_q, seqlen_q, dim_q), device=q.device, dtype=q.dtype).transpose(1, 3)
+            out = torch.empty((batch_size, heads_per_group_q, group_q, seqlen_q, dim_q), device=q.device, dtype=q.dtype).transpose(1, 3)
         else:
-            out = torch.empty((batch_size, seqlen_q, group_q, head_q, dim_q), device=q.device, dtype=q.dtype)
+            out = torch.empty((batch_size, seqlen_q, group_q, heads_per_group_q, dim_q), device=q.device, dtype=q.dtype)
 
         # Merge together
         splitK_pow2 = triton.next_power_of_2(split_k)
         use_mask = splitK_pow2 > split_k
-        if batch_size * group_q * head_q * seqlen_q >= 512:
+        if batch_size * group_q * heads_per_group_q * seqlen_q >= 512:
             k_block_num = 1
         else:
             k_block_num = 2
         assert out.shape[-1] % k_block_num == 0
         k_block_size = out.shape[-1] // k_block_num
-        grid = (batch_size * group_q * head_q, seqlen_q, k_block_num)
+        grid = (batch_size * group_q * heads_per_group_q, seqlen_q, k_block_num)
         _splitK_reduce[grid](
             o_splitk, 
             metadata, 
@@ -731,14 +748,14 @@ class _attention(torch.autograd.Function):
             M_ceil=seqlen_q_ceil, 
             BLOCK_SIZE=k_block_size, 
             G=group_q, 
-            H=head_q,
+            H=heads_per_group_q,
             # TODO: Tune num_warps
             split_k=split_k, 
             splitK_pow2=splitK_pow2, 
             use_mask=use_mask, 
             num_warps=4)
 
-        lse = lse.reshape([batch_size, group_q, head_q, seqlen_q])
+        lse = lse.reshape([batch_size, group_q, heads_per_group_q, seqlen_q])
         if mqa_swap_seqlen_head:
             # H/M dimensions have been swapped
             out = out.transpose(1, 3)
@@ -753,12 +770,15 @@ class _attention(torch.autograd.Function):
         if mqa_swap_seqlen_head:
             out = out.reshape(batch_size, -1, seqlen_q * group_q, dim_q).transpose(1, 2).contiguous()
         else:
-            out = out.reshape(batch_size, head_q * group_q, -1, dim_q).contiguous()
+            out = out.reshape(batch_size, heads_per_group_q * group_q, -1, dim_q).contiguous()
 
+        print("out before permute:", out)
 
-        # out is "bhsd"
-        if input_metadata.layout == "bshd":
-            out=out.permute(0, 2, 1, 3)
+        # output is batch_size, heads_per_group_q * group_q, seqlen_q, dim_q
+        if original_layout == "bshd":
+            # out=out.transpose(1, 2).contiguous() # this screws up heads and data.
+            # the data is laid out properly. Just need to reshape dims
+            out = out.reshape(batch_size, seqlen_q, -1, dim_q)
 
         return out
 
