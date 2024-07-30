@@ -1907,8 +1907,8 @@ def test_flash_attn_splitkv(
 # @pytest.mark.parametrize("mha_type", ["mha"])
 # @pytest.mark.parametrize("mha_type", ["mqa"])
 # @pytest.mark.parametrize("mha_type", ["gqa"])
-# @pytest.mark.parametrize("new_kv", [False, True])
-@pytest.mark.parametrize("new_kv", [False])
+@pytest.mark.parametrize("new_kv", [False, True])
+# @pytest.mark.parametrize("new_kv", [False])
 # @pytest.mark.parametrize("new_kv", [True])
 # @pytest.mark.parametrize("alibi", [False, True])
 @pytest.mark.parametrize("alibi", [False])
@@ -2039,7 +2039,7 @@ def test_flash_attn_kvcache(
         k, v = None, None
     if paged_kv_block_size is None:
         # Increasing Cache
-        if True:
+        if False:
             k_cache = torch.zeros(batch_size_cache, seqlen_k, nheads_k, d, device=device, dtype=dtype)
             v_cache = torch.zeros(batch_size_cache, seqlen_k, nheads_k, d, device=device, dtype=dtype)
             

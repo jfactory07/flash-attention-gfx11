@@ -152,7 +152,7 @@ def _fwd_kernel_splitK(
 
     # Copy new Keys and Values into Cache
     if NEW_KV:
-        kn_base = K_new + off_h_q * stride_kn_h + off_z * stride_kn_z + off_g_q * stride_kn_g
+        kn_base = K_new + k_head_idx * stride_kn_h + off_z * stride_kn_z + off_g_q * stride_kn_g
         
         # Determine the starting position for new data in the cache
         if USE_CACHE_SEQLENs:
@@ -181,7 +181,7 @@ def _fwd_kernel_splitK(
             )
 
         # Copy new Values
-        vn_base = V_new + off_h_q * stride_vn_h + off_z * stride_vn_z + off_g_q * stride_vn_g
+        vn_base = V_new + v_head_idx * stride_vn_h + off_z * stride_vn_z + off_g_q * stride_vn_g
         for i in range(0, N_CTX_NEW, BLOCK_N):
             # Load from V_new
             v_new_block = tl.load(
