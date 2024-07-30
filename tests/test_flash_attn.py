@@ -1902,13 +1902,13 @@ def test_flash_attn_splitkv(
 @pytest.mark.parametrize("dtype", [torch.float16])
 # @pytest.mark.parametrize("num_splits", [1, 0])
 @pytest.mark.parametrize("num_splits", [0])
-# @pytest.mark.parametrize("mha_type", ["mha", "mqa", "gqa"])
+@pytest.mark.parametrize("mha_type", ["mha", "mqa", "gqa"])
 # @pytest.mark.parametrize("mha_type", ["mha", "mqa"])
-@pytest.mark.parametrize("mha_type", ["mha"])
+# @pytest.mark.parametrize("mha_type", ["mha"])
 # @pytest.mark.parametrize("mha_type", ["mqa"])
 # @pytest.mark.parametrize("mha_type", ["gqa"])
-@pytest.mark.parametrize("new_kv", [False, True])
-# @pytest.mark.parametrize("new_kv", [False])
+# @pytest.mark.parametrize("new_kv", [False, True])
+@pytest.mark.parametrize("new_kv", [False])
 # @pytest.mark.parametrize("new_kv", [True])
 # @pytest.mark.parametrize("alibi", [False, True])
 @pytest.mark.parametrize("alibi", [False])
@@ -1925,8 +1925,8 @@ def test_flash_attn_splitkv(
 # @pytest.mark.parametrize("paged_kv_block_size", [None, 256])
 # @pytest.mark.parametrize("paged_kv_block_size", [256, 512])
 @pytest.mark.parametrize("paged_kv_block_size", [None])
-@pytest.mark.parametrize("has_batch_idx", [False, True])
-# @pytest.mark.parametrize("has_batch_idx", [False])
+# @pytest.mark.parametrize("has_batch_idx", [False, True])
+@pytest.mark.parametrize("has_batch_idx", [False])
 # @pytest.mark.parametrize("has_batch_idx", [True])
 @pytest.mark.parametrize("d", [32, 59, 64, 80, 128, 256])
 # @pytest.mark.parametrize("d", [32, 64, 96, 128, 160, 192, 224, 256])
@@ -2039,7 +2039,7 @@ def test_flash_attn_kvcache(
         k, v = None, None
     if paged_kv_block_size is None:
         # Increasing Cache
-        if False:
+        if True:
             k_cache = torch.zeros(batch_size_cache, seqlen_k, nheads_k, d, device=device, dtype=dtype)
             v_cache = torch.zeros(batch_size_cache, seqlen_k, nheads_k, d, device=device, dtype=dtype)
             
@@ -2255,6 +2255,15 @@ def test_flash_attn_kvcache(
             print("v_cache_select:", v_cache_select, v_cache_select.shape)
             print("v_cache_ref:", v_cache_ref, v_cache_ref.shape)
         assert torch.equal(v_cache_select, v_cache_ref)
+    else:
+        if DEBUG:
+            print("k_cache_select:", k_cache, k_cache.shape)
+            print("k_cache_ref:", k_cache_ref, k_cache_ref.shape)
+        assert torch.allclose(k_cache, k_cache_ref, rtol=1e-3, atol=1e-3)
+        if DEBUG:
+            print("v_cache_select:", v_cache, v_cache.shape)
+            print("v_cache_ref:", v_cache_ref, v_cache_ref.shape)
+        assert torch.equal(v_cache, v_cache_ref)
 
     if not torch.allclose(out, out_ref, rtol=1e-3, atol=1e-3):
         print("Mismatch between FlashAttention and reference implementation")

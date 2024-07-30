@@ -68,6 +68,7 @@ def _fwd_kernel_splitK(
     N_CTX_NEW,
     BLOCK_N_PER_SPLIT,
     H_q: tl.constexpr,
+    H_kv: tl.constexpr,
     G_q: tl.constexpr,
     BLOCK_M: tl.constexpr,
     BLOCK_DMODEL: tl.constexpr,
@@ -137,9 +138,17 @@ def _fwd_kernel_splitK(
     # print("lo:", lo)
     # print("hi:", hi)
 
+    HEAD_RATIO: tl.constexpr = H_q // H_kv
+    if IS_GQA:
+        k_head_idx = off_h_q // HEAD_RATIO
+        v_head_idx = k_head_idx
+    else:
+        k_head_idx = off_h_q
+        v_head_idx = off_h_q
+
     # calculate base offset
-    k_base = K + off_h_q * stride_kh + cache_batch_idx * stride_kz + off_g_q * stride_kg
-    v_base = V + off_h_q * stride_vh + cache_batch_idx * stride_vz + off_g_q * stride_vg
+    k_base = K + k_head_idx * stride_kh + cache_batch_idx * stride_kz + off_g_q * stride_kg
+    v_base = V + v_head_idx * stride_vh + cache_batch_idx * stride_vz + off_g_q * stride_vg
 
     # Copy new Keys and Values into Cache
     if NEW_KV:
@@ -609,16 +618,17 @@ class _attention(torch.autograd.Function):
 
         # Handle MQA/GQA case
         if heads_per_group_q > heads_per_group_k:
-            n_heads_per_group = heads_per_group_q // heads_per_group_k
             input_metadata.is_gqa = True
-            
-            # Repeat each row of k and v to match the number of query heads
-            k = k.repeat_interleave(n_heads_per_group, dim=3)
-            v = v.repeat_interleave(n_heads_per_group, dim=3)
-            
-            # Update heads_per_group_k and heads_per_group_v
-            heads_per_group_k = heads_per_group_q
-            heads_per_group_v = heads_per_group_q
+
+            # n_heads_per_group = heads_per_group_q // heads_per_group_k
+
+            # # Repeat each row of k and v to match the number of query heads
+            # k = k.repeat_interleave(n_heads_per_group, dim=3)
+            # v = v.repeat_interleave(n_heads_per_group, dim=3)
+        
+            # # Update heads_per_group_k and heads_per_group_v
+            # heads_per_group_k = heads_per_group_q
+            # heads_per_group_v = heads_per_group_q
         elif heads_per_group_q < heads_per_group_k:
             raise ValueError("heads_per_group_q < heads_per_group_k")
         else:
@@ -719,6 +729,7 @@ class _attention(torch.autograd.Function):
             **_strides(input_metadata.v_new, "vn_z", "vn_n", "vn_g", "vn_h", "vn_d"),
             Z=batch_size,
             H_q=heads_per_group_q,
+            H_kv=heads_per_group_k,
             G_q=n_group_q,
             N_CTX_Q=seqlen_q,
             N_CTX_K=seqlen_k,
