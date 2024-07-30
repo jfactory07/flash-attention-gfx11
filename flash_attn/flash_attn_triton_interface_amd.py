@@ -300,7 +300,7 @@ def fwd_kvcache(
     if DEBUG:
         print()
         print("flash_attn_triton_amd.py::fwd_kvcache")
-        print("q:", q.shape)
+        print("q:", q, q.shape)
         print("k_cache:", k_cache, k_cache.shape)
         print("v_cache:", v_cache, v_cache.shape)
         print("k:", k, k.shape if k is not None else None)

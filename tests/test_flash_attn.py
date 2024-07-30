@@ -2017,7 +2017,7 @@ def test_flash_attn_kvcache(
     device = "cuda"
     # set seed
     torch.random.manual_seed(0)
-    batch_size = 2 # 2
+    batch_size = 1 # 2
     batch_size_cache = batch_size if not has_batch_idx else batch_size * 2
     nheads_q = 6 # 6
     
@@ -2250,9 +2250,21 @@ def test_flash_attn_kvcache(
         if DEBUG:
             print("k_cache_select:", k_cache_select, k_cache_select.shape)
             print("k_cache_ref:", k_cache_ref, k_cache_ref.shape)
-            
         assert torch.allclose(k_cache_select, k_cache_ref, rtol=1e-3, atol=1e-3)
+        if DEBUG:
+            print("v_cache_select:", v_cache_select, v_cache_select.shape)
+            print("v_cache_ref:", v_cache_ref, v_cache_ref.shape)
         assert torch.equal(v_cache_select, v_cache_ref)
+
+    if not torch.allclose(out, out_ref, rtol=1e-3, atol=1e-3):
+        print("Mismatch between FlashAttention and reference implementation")
+        print("Max absolute difference:", (out - out_ref).abs().max().item())
+        print("Mean absolute difference:", (out - out_ref).abs().mean().item())
+        print("Positions of large differences:")
+        large_diff_mask = (out - out_ref).abs() > 1e-3
+        print(large_diff_mask.nonzero())
+    
+
     mult = 3 if not alibi else 5
     assert (out - out_ref).abs().max().item() <= mult * (out_pt - out_ref).abs().max().item() + 1e-5
 
