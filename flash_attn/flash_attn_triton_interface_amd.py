@@ -417,6 +417,12 @@ def fwd_kvcache(
             input_metadata.seqlen_new = k.shape[1]
             input_metadata.k_new = k
             input_metadata.v_new = v
+
+        if causal:
+            input_metadata.need_causal()
+        
+        if alibi_slopes is not None:
+            input_metadata.need_alibi(alibi_slopes, batch, nheads_q)
         
         # launch kernel
         tri_out = attention_decode(q, k_cache, v_cache, input_metadata)

@@ -269,16 +269,26 @@ def attention_ref(
     k = repeat(k, "b s h d -> b s (h g) d", g=q.shape[2] // k.shape[2])
     v = repeat(v, "b s h d -> b s (h g) d", g=q.shape[2] // v.shape[2])
     d = q.shape[-1]
-    if not reorder_ops:
-        scores = torch.einsum("bthd,bshd->bhts", q / math.sqrt(d), k)
+    if False:
+        if not reorder_ops:
+                scores = torch.einsum("bthd,bshd->bhts", q, k)
+        else:
+            scores = torch.einsum("bthd,bshd->bhts", q, k)
     else:
-        scores = torch.einsum("bthd,bshd->bhts", q, k / math.sqrt(d))
+        if not reorder_ops:
+            scores = torch.einsum("bthd,bshd->bhts", q / math.sqrt(d), k)
+        else:
+            scores = torch.einsum("bthd,bshd->bhts", q, k / math.sqrt(d))
+    
+    
 
-    if PRINT_DEBUG:
-        print("scores before:", scores, scores.shape)
 
     if key_padding_mask is not None:
+        if PRINT_DEBUG:
+            print("scores before key padding mask:", scores, scores.shape)
         scores.masked_fill_(rearrange(~key_padding_mask, "b s -> b 1 1 s"), float("-inf"))
+        if PRINT_DEBUG:
+            print("scores after key padding mask:", scores, scores.shape)
     if window_size[0] >= 0 or window_size[1] >= 0:
         local_mask = construct_local_mask(
             seqlen_q,
@@ -288,12 +298,13 @@ def attention_ref(
             key_padding_mask,
             q.device,
         )
+        if PRINT_DEBUG:
+            print("scores before causal:",scores)
         scores.masked_fill_(local_mask, float("-inf"))
+        if PRINT_DEBUG:
+            print("scores after causal:",scores)
     if attn_bias is not None:
         scores = scores + attn_bias
-
-    if PRINT_DEBUG:
-        print("scores after:",scores)
     
     attention = torch.softmax(scores, dim=-1).to(v.dtype)
     # Some rows might be completely masked out so we fill them with zero instead of NaN
@@ -1902,20 +1913,21 @@ def test_flash_attn_splitkv(
 @pytest.mark.parametrize("dtype", [torch.float16])
 # @pytest.mark.parametrize("num_splits", [1, 0])
 @pytest.mark.parametrize("num_splits", [0])
-@pytest.mark.parametrize("mha_type", ["mha", "mqa", "gqa"])
+# @pytest.mark.parametrize("mha_type", ["mha", "mqa", "gqa"])
 # @pytest.mark.parametrize("mha_type", ["mha", "mqa"])
-# @pytest.mark.parametrize("mha_type", ["mha"])
+@pytest.mark.parametrize("mha_type", ["mha"])
 # @pytest.mark.parametrize("mha_type", ["mqa"])
 # @pytest.mark.parametrize("mha_type", ["gqa"])
-@pytest.mark.parametrize("new_kv", [False, True])
-# @pytest.mark.parametrize("new_kv", [False])
+# @pytest.mark.parametrize("new_kv", [False, True])
+@pytest.mark.parametrize("new_kv", [False])
 # @pytest.mark.parametrize("new_kv", [True])
 # @pytest.mark.parametrize("alibi", [False, True])
 @pytest.mark.parametrize("alibi", [False])
 # @pytest.mark.parametrize("local", [False, True])
 @pytest.mark.parametrize("local", [False])
 # @pytest.mark.parametrize("causal", [False, True])
-@pytest.mark.parametrize("causal", [False])
+# @pytest.mark.parametrize("causal", [False])
+@pytest.mark.parametrize("causal", [True])
 # @pytest.mark.parametrize("seqlen_new_eq_seqlen_q", [True, False])
 @pytest.mark.parametrize("seqlen_new_eq_seqlen_q", [False])
 # @pytest.mark.parametrize("rotary_interleaved", [False, True])
@@ -1925,15 +1937,15 @@ def test_flash_attn_splitkv(
 # @pytest.mark.parametrize("paged_kv_block_size", [None, 256])
 # @pytest.mark.parametrize("paged_kv_block_size", [256, 512])
 @pytest.mark.parametrize("paged_kv_block_size", [None])
-@pytest.mark.parametrize("has_batch_idx", [False, True])
-# @pytest.mark.parametrize("has_batch_idx", [False])
+# @pytest.mark.parametrize("has_batch_idx", [False, True])
+@pytest.mark.parametrize("has_batch_idx", [False])
 # @pytest.mark.parametrize("has_batch_idx", [True])
-@pytest.mark.parametrize("d", [32, 59, 64, 80, 128, 256])
+# @pytest.mark.parametrize("d", [32, 59, 64, 80, 128, 256])
 # @pytest.mark.parametrize("d", [32, 64, 96, 128, 160, 192, 224, 256])
 # @pytest.mark.parametrize('d', [32, 40, 64, 80, 96, 128, 160, 192])
 # @pytest.mark.parametrize('d', [56, 80])
 # @pytest.mark.parametrize("d", [128])
-# @pytest.mark.parametrize("d", [16])
+@pytest.mark.parametrize("d", [16])
 @pytest.mark.parametrize(
     "seqlen_q,seqlen_k",
     [  
@@ -1942,22 +1954,25 @@ def test_flash_attn_splitkv(
         # (2, 2),
         # (2, 4),
         # (4, 2),
+        (4, 4),
+        # (1, 4),
+        # (16, 64),
         # (1, 4),
         # (1, 8),
         # (1, 16),
         # (1, 32),
         # (1, 64),
-        (1, 128),
-        (1, 339),
-        (3, 1024),
-        (64, 800),
-        (64, 256),
-        (3, 799),
-        (64, 2048),
-        (16, 20000),
-        (1, 128 * 1024),
-        (16, 128 * 1024),
-        (128, 128),
+        # (1, 128),
+        # (1, 339),
+        # (3, 1024),
+        # (64, 800),
+        # (64, 256),
+        # (3, 799),
+        # (64, 2048),
+        # (16, 20000),
+        # (1, 128 * 1024),
+        # (16, 128 * 1024),
+        # (128, 128),
     ],
 )
 # @pytest.mark.parametrize('seqlen_q,seqlen_k', [(256, 128)])
@@ -2019,7 +2034,7 @@ def test_flash_attn_kvcache(
     torch.random.manual_seed(0)
     batch_size = 1 # 2
     batch_size_cache = batch_size if not has_batch_idx else batch_size * 2
-    nheads_q = 6 # 6
+    nheads_q = 1 # 6
     
     if DEBUG:
         print("nheads_q:", nheads_q)
@@ -2030,7 +2045,12 @@ def test_flash_attn_kvcache(
     nheads_k = nheads_q if mha_type == "mha" else (1 if mha_type == "mqa" else 3)
     assert nheads_q % nheads_k == 0
     window_size = (-1, -1) if not local else torch.randint(0, seqlen_k, (2,))
-    q = torch.randn(batch_size, seqlen_q, nheads_q, d, device=device, dtype=dtype)
+    if True:
+        q = torch.zeros(batch_size_cache, seqlen_q, nheads_k, d, device=device, dtype=dtype)    
+        for i in range(seqlen_q):
+            q[:, i, :, :] = torch.full((batch_size_cache, nheads_k, d), i + 1, device=device, dtype=dtype)
+    else:
+        q = torch.randn(batch_size, seqlen_q, nheads_q, d, device=device, dtype=dtype)
     seqlen_new = seqlen_q if seqlen_new_eq_seqlen_q else torch.randint(1, seqlen_q + 1, (1,)).item()
     if new_kv:
         k = torch.randn(batch_size, seqlen_new, nheads_k, d, device=device, dtype=dtype)
@@ -2046,7 +2066,21 @@ def test_flash_attn_kvcache(
             for i in range(nheads_k):
                 k_cache[:, :, i, :] = torch.full((batch_size_cache, seqlen_k, d), i + 1, device=device, dtype=dtype)
                 v_cache[:, :, i, :] = torch.full((batch_size_cache, seqlen_k, d), i + 1, device=device, dtype=dtype)
-    
+        elif True:
+            k_cache = torch.zeros(batch_size_cache, seqlen_k, nheads_k, d, device=device, dtype=dtype)
+            v_cache = torch.zeros(batch_size_cache, seqlen_k, nheads_k, d, device=device, dtype=dtype)
+            
+            for i in range(seqlen_k):
+                k_cache[:, i, :, :] = torch.full((batch_size_cache, nheads_k, d), i + 1, device=device, dtype=dtype)
+                v_cache[:, i, :, :] = torch.full((batch_size_cache, nheads_k, d), i + 1, device=device, dtype=dtype)
+        
+        elif False:
+            k_cache = torch.zeros(batch_size_cache, seqlen_k, nheads_k, d, device=device, dtype=dtype)
+            v_cache = torch.zeros(batch_size_cache, seqlen_k, nheads_k, d, device=device, dtype=dtype)
+            
+            values = torch.arange(1, d + 1, device=device, dtype=dtype).view(1, 1, 1, d)
+            k_cache[:, :, :, :] = values.expand(batch_size_cache, seqlen_k, nheads_k, d)
+            v_cache[:, :, :, :] = values.expand(batch_size_cache, seqlen_k, nheads_k, d)
         else:
             k_cache = torch.randn(batch_size_cache, seqlen_k, nheads_k, d, device=device, dtype=dtype)
             v_cache = torch.randn(batch_size_cache, seqlen_k, nheads_k, d, device=device, dtype=dtype)

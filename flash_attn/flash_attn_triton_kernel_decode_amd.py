@@ -78,6 +78,7 @@ def _fwd_kernel_splitK(
     USE_CACHE_BATCH_IDX: tl.constexpr,
     NEW_KV: tl.constexpr,
     IS_GQA: tl.constexpr,
+    IS_CAUSAL: tl.constexpr,
     PACKED_PER_VAL: tl.constexpr = 1,
     N_QUANT_GROUPS: tl.constexpr = 1,
 ):
@@ -252,7 +253,7 @@ def _fwd_kernel_splitK(
         V_scale_shift_block_ptr = None
 
     # initialize pointer to m and l
-    m_i = tl.zeros([BLOCK_M], dtype=tl.float32) - float("inf")
+    m_i = tl.full([BLOCK_M], float("-inf"), dtype=tl.float32)
     l_i = tl.zeros([BLOCK_M], dtype=tl.float32)
 
     acc = tl.zeros([BLOCK_M, D_PER_GROUP], dtype=tl.float32)  # noqa: F821
@@ -264,7 +265,8 @@ def _fwd_kernel_splitK(
     # load q: it will stay in SRAM throughout
     q = tl.load(  # noqa: F821
         tl.advance(Q_block_ptr, (0, 0)), boundary_check=(0, ))
-    q = (q * qk_scale).to(q.dtype)
+    # q = (q * qk_scale).to(q.dtype)
+    # print("q:", q)
 
     # print("BLOCK_N:", BLOCK_N)
     # loop over k, v and update accumulator
@@ -287,15 +289,46 @@ def _fwd_kernel_splitK(
         # -- compute qk ---
         qk = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32)
         qk += tl.dot(q, k)  # noqa: F821
+        # print("qk before:", qk)
+
+        # Apply causal mask if IS_CAUSAL is True
+        if IS_CAUSAL:
+            row_idx = start_m * BLOCK_M + tl.arange(0, BLOCK_M)
+            if USE_CACHE_SEQLENs:
+                cache_seqlen = tl.load(Cache_seqlens + off_z)
+                col_idx = cache_seqlen + start_n + tl.arange(0, BLOCK_N)
+            else:
+                col_idx = start_n + tl.arange(0, BLOCK_N)
+            causal_mask = row_idx[:, None] >= col_idx[None, :]
+            qk = tl.where(causal_mask, qk, float("-inf"))
+        # print("qk after causal:", qk)
 
         # TODO: This is slow, and only needed at the last iteration.
         # Maybe we can unroll the last iteration instead?
         if BOUNDS_CHECKS_N:
             qk = tl.where(tl.arange(0, BLOCK_N) < hi - start_n, qk, float("-inf"))
+        # print("qk after BOUNDS_CHECKS_N:", qk)
+
         # -- compute scaling constant ---
+        # print("m_i:", m_i)
         m_i_new = tl.maximum(m_i, tl.max(qk, 1))
-        alpha = tl.math.exp2(m_i - m_i_new)
-        p = tl.math.exp2(qk - m_i_new[:, None])
+        # print("m_i_new:", m_i_new)
+        if IS_CAUSAL:
+            alpha = tl.math.exp2(tl.where(m_i > float("-inf"), m_i - m_i_new, float("-inf")))
+        else:
+            alpha = tl.math.exp2(m_i - m_i_new)
+       
+        print("alpha:", alpha)
+        # print("before qk - m_i_new:", qk)
+        # cause of nan because subtracting infs
+        if IS_CAUSAL:
+            qk = tl.where(qk > float("-inf"), qk - m_i_new[:, None], float("-inf"))
+        else:
+            qk = qk - m_i_new[:, None] 
+        
+        print("qk before p:", qk)
+        p = tl.math.exp2(qk)
+        print("p:", p)
 
         # -- update m_i and l_i --
         l_i = l_i * alpha + tl.sum(p, 1)
@@ -305,6 +338,8 @@ def _fwd_kernel_splitK(
         # -- scale and update acc --
         acc *= alpha[:, None]
         acc += tl.dot(p, v)
+        print("acc:", acc)
+        
         # update pointers
         K_block_ptr = tl.advance(K_block_ptr, (0, BLOCK_N))
         V_block_ptr = tl.advance(V_block_ptr, (BLOCK_N, 0))
@@ -470,6 +505,10 @@ def _splitK_reduce(
         l_m = tl.load(Metadata_ptr)
         l_sum = tl.load(Metadata_ptr + stride_m2)
         acc = tl.load(o_ptr)
+
+    print("l_m:", l_m)
+    print("l_sum:", l_sum)
+    print("acc:", acc)
 
     g_m = tl.max(l_m, axis=0)
     alpha = tl.math.exp2(l_m - g_m)
@@ -743,6 +782,7 @@ class _attention(torch.autograd.Function):
             USE_CACHE_BATCH_IDX= input_metadata.cache_batch_idx is not None,
             NEW_KV=input_metadata.new_kv,
             IS_GQA=input_metadata.is_gqa,
+            IS_CAUSAL=input_metadata.causal,
             num_warps=num_warps,
             num_stages=1,
             PACKED_PER_VAL=PACKED_PER_VAL,
@@ -764,6 +804,18 @@ class _attention(torch.autograd.Function):
         assert out.shape[-1] % k_block_num == 0
         k_block_size = out.shape[-1] // k_block_num
         grid = (batch_size * n_group_q * heads_per_group_q, seqlen_q, k_block_num)
+        print("grid:", grid)
+
+
+        if DEBUG:
+            print("Before _splitK_reduce call")
+            print("out_splitk:", out_splitk, out_splitk.shape)
+            print("metadata:", metadata, metadata.shape)
+            print("out:", out)
+            print("lse:", lse)
+            print("use_mask:", use_mask)
+            
+
         _splitK_reduce[grid](
             out_splitk, 
             metadata, 
