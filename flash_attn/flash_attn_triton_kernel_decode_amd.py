@@ -265,7 +265,7 @@ def _fwd_kernel_splitK(
     # load q: it will stay in SRAM throughout
     q = tl.load(  # noqa: F821
         tl.advance(Q_block_ptr, (0, 0)), boundary_check=(0, ))
-    # q = (q * qk_scale).to(q.dtype)
+    q = (q * qk_scale).to(q.dtype)
     # print("q:", q)
 
     # print("BLOCK_N:", BLOCK_N)
@@ -318,7 +318,7 @@ def _fwd_kernel_splitK(
         else:
             alpha = tl.math.exp2(m_i - m_i_new)
        
-        print("alpha:", alpha)
+        # print("alpha:", alpha)
         # print("before qk - m_i_new:", qk)
         # cause of nan because subtracting infs
         if IS_CAUSAL:
@@ -326,9 +326,9 @@ def _fwd_kernel_splitK(
         else:
             qk = qk - m_i_new[:, None] 
         
-        print("qk before p:", qk)
+        # print("qk before p:", qk)
         p = tl.math.exp2(qk)
-        print("p:", p)
+        # print("p:", p)
 
         # -- update m_i and l_i --
         l_i = l_i * alpha + tl.sum(p, 1)
@@ -338,7 +338,7 @@ def _fwd_kernel_splitK(
         # -- scale and update acc --
         acc *= alpha[:, None]
         acc += tl.dot(p, v)
-        print("acc:", acc)
+        # print("acc:", acc)
         
         # update pointers
         K_block_ptr = tl.advance(K_block_ptr, (0, BLOCK_N))
@@ -478,6 +478,7 @@ def _splitK_reduce(
     split_k: tl.constexpr,
     splitK_pow2: tl.constexpr,
     use_mask: tl.constexpr,
+    IS_CAUSAL: tl.constexpr,
 ):
     off_zhg = tl.program_id(0)
     off_z = off_zhg // (H * G)
@@ -511,18 +512,39 @@ def _splitK_reduce(
     print("acc:", acc)
 
     g_m = tl.max(l_m, axis=0)
-    alpha = tl.math.exp2(l_m - g_m)
+    
+    # print("g_m:", g_m)
+    if IS_CAUSAL:
+        l_m_offset = l_m - g_m
+        alpha = tl.where(l_m_offset > float("-inf"), tl.math.exp2(l_m_offset), 0.0)
+    else:
+        alpha = tl.math.exp2(l_m - g_m)
+    # print("alpha:", alpha)
 
     # read sum
     l_sum *= alpha
     g_sum = tl.sum(l_sum, axis=0)
     acc = acc * alpha[:, None]
-    acc_out = tl.sum(acc, axis=0) / g_sum
+
+    if IS_CAUSAL:
+        # Avoid division by zero
+        g_sum_safe = tl.where(g_sum > 0, g_sum, 1.0)
+        acc_out = tl.sum(acc, axis=0) / g_sum_safe
+    else:
+        acc_out = tl.sum(acc, axis=0) / g_sum
+
+    # Store output
     Out_ptr = (Out + stride_oz * off_z + stride_oh * off_h + stride_og * off_g + stride_om * off_m +
                off_k * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE))
     tl.store(Out_ptr, acc_out)
+
+    # Store lse
     l_ptrs = LSE + off_zhg * stride_lse_zhg + off_m
-    tl.store(l_ptrs, (g_m + tl.math.log2(g_sum)) / 1.44269504)
+    if IS_CAUSAL:
+        lse = tl.where(g_sum > 0, (g_m + tl.math.log2(g_sum)) / 1.44269504, g_m)
+        tl.store(l_ptrs, lse)
+    else:
+        tl.store(l_ptrs, (g_m + tl.math.log2(g_sum)) / 1.44269504)
 
 
 def quantize_kv_int4(k: torch.Tensor, num_groups: int = 1) -> torch.Tensor:
@@ -832,7 +854,8 @@ class _attention(torch.autograd.Function):
             # TODO: Tune num_warps
             split_k=split_k, 
             splitK_pow2=splitK_pow2, 
-            use_mask=use_mask, 
+            use_mask=use_mask,
+            IS_CAUSAL=input_metadata.causal,
             num_warps=4)
 
         lse = lse.reshape([batch_size, n_group_q, heads_per_group_q, seqlen_q])

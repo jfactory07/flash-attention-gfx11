@@ -1954,7 +1954,7 @@ def test_flash_attn_splitkv(
         # (2, 2),
         # (2, 4),
         # (4, 2),
-        (4, 4),
+        # (4, 4),
         # (1, 4),
         # (16, 64),
         # (1, 4),
@@ -1962,17 +1962,17 @@ def test_flash_attn_splitkv(
         # (1, 16),
         # (1, 32),
         # (1, 64),
-        # (1, 128),
-        # (1, 339),
-        # (3, 1024),
-        # (64, 800),
-        # (64, 256),
-        # (3, 799),
-        # (64, 2048),
-        # (16, 20000),
-        # (1, 128 * 1024),
-        # (16, 128 * 1024),
-        # (128, 128),
+        (1, 128),
+        (1, 339),
+        (3, 1024),
+        (64, 800),
+        (64, 256),
+        (3, 799),
+        (64, 2048),
+        (16, 20000),
+        (1, 128 * 1024),
+        (16, 128 * 1024),
+        (128, 128),
     ],
 )
 # @pytest.mark.parametrize('seqlen_q,seqlen_k', [(256, 128)])
@@ -2045,7 +2045,7 @@ def test_flash_attn_kvcache(
     nheads_k = nheads_q if mha_type == "mha" else (1 if mha_type == "mqa" else 3)
     assert nheads_q % nheads_k == 0
     window_size = (-1, -1) if not local else torch.randint(0, seqlen_k, (2,))
-    if True:
+    if False:
         q = torch.zeros(batch_size_cache, seqlen_q, nheads_k, d, device=device, dtype=dtype)    
         for i in range(seqlen_q):
             q[:, i, :, :] = torch.full((batch_size_cache, nheads_k, d), i + 1, device=device, dtype=dtype)
@@ -2066,7 +2066,7 @@ def test_flash_attn_kvcache(
             for i in range(nheads_k):
                 k_cache[:, :, i, :] = torch.full((batch_size_cache, seqlen_k, d), i + 1, device=device, dtype=dtype)
                 v_cache[:, :, i, :] = torch.full((batch_size_cache, seqlen_k, d), i + 1, device=device, dtype=dtype)
-        elif True:
+        elif False:
             k_cache = torch.zeros(batch_size_cache, seqlen_k, nheads_k, d, device=device, dtype=dtype)
             v_cache = torch.zeros(batch_size_cache, seqlen_k, nheads_k, d, device=device, dtype=dtype)
             
