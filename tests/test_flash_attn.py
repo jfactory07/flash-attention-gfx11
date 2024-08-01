@@ -50,6 +50,7 @@ def attn_bias_from_alibi_slopes(
             else rearrange(query_padding_mask.sum(-1), "b -> b 1 1 1")
         )
         relative_pos = torch.abs(row_idx + sk - sq - col_idx)
+        print("relative_pos:", relative_pos)
         return -slopes * relative_pos.to(dtype=slopes.dtype)
 
 
@@ -304,7 +305,11 @@ def attention_ref(
         if PRINT_DEBUG:
             print("scores after causal:",scores)
     if attn_bias is not None:
+        if PRINT_DEBUG:
+            print("scores before attn_bias:", scores, scores.shape)
         scores = scores + attn_bias
+        if PRINT_DEBUG:
+            print("scores after attn_bias:", scores, scores.shape)
     
     attention = torch.softmax(scores, dim=-1).to(v.dtype)
     # Some rows might be completely masked out so we fill them with zero instead of NaN
@@ -1921,8 +1926,9 @@ def test_flash_attn_splitkv(
 @pytest.mark.parametrize("new_kv", [False, True])
 # @pytest.mark.parametrize("new_kv", [False])
 # @pytest.mark.parametrize("new_kv", [True])
-# @pytest.mark.parametrize("alibi", [False, True])
-@pytest.mark.parametrize("alibi", [False])
+@pytest.mark.parametrize("alibi", [False, True])
+# @pytest.mark.parametrize("alibi", [False])
+# @pytest.mark.parametrize("alibi", [True])
 # @pytest.mark.parametrize("local", [False, True])
 @pytest.mark.parametrize("local", [False])
 @pytest.mark.parametrize("causal", [False, True])

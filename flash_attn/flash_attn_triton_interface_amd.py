@@ -422,6 +422,7 @@ def fwd_kvcache(
             input_metadata.need_causal()
         
         if alibi_slopes is not None:
+            batch, _ , nheads_q, _= q.shape
             input_metadata.need_alibi(alibi_slopes, batch, nheads_q)
         
         # launch kernel

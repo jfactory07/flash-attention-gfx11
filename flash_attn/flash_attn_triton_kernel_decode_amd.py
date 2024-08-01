@@ -29,6 +29,7 @@ def _fwd_kernel_splitK(
     V_new,
     Cache_seqlens,
     Cache_batch_idx,
+    Alibi_slopes,
     stride_qz,
     stride_qm,
     stride_qg,
@@ -62,6 +63,8 @@ def _fwd_kernel_splitK(
     stride_vn_g,
     stride_vn_h,
     stride_vn_d,
+    stride_az, 
+    stride_ah,
     Z,
     N_CTX_Q,
     N_CTX_K,
@@ -79,6 +82,7 @@ def _fwd_kernel_splitK(
     NEW_KV: tl.constexpr,
     IS_GQA: tl.constexpr,
     IS_CAUSAL: tl.constexpr,
+    USE_ALIBI: tl.constexpr,
     PACKED_PER_VAL: tl.constexpr = 1,
     N_QUANT_GROUPS: tl.constexpr = 1,
 ):
@@ -124,6 +128,13 @@ def _fwd_kernel_splitK(
     else:
         cache_batch_idx = off_z
 
+    # Load ALiBi slope if enabled
+    if USE_ALIBI:
+        a_offset = off_z * stride_az + off_h_q * stride_ah
+        alibi_slope = tl.load(Alibi_slopes + a_offset)
+    else:
+        alibi_slope = None
+    # print("alibi_slope:", alibi_slope)
 
     lo = splitk_idx * BLOCK_N_PER_SPLIT
     if USE_CACHE_SEQLENs:
@@ -290,6 +301,20 @@ def _fwd_kernel_splitK(
         qk = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32)
         qk += tl.dot(q, k)  # noqa: F821
         # print("qk before:", qk)
+
+        if USE_ALIBI:
+            row_idx = start_m * BLOCK_M + tl.arange(0, BLOCK_M)
+            col_idx = start_n + tl.arange(0, BLOCK_N)
+            
+            # Compute relative positions
+            relative_pos = row_idx[:, None] + kv_len - (N_CTX_Q + col_idx[None, :])
+            relative_pos = tl.abs(relative_pos)
+            # print("relative_pos:", relative_pos)
+            
+            # Compute ALiBi bias
+            alibi_bias = -1 * alibi_slope * relative_pos
+            # print("alibi_bias:", alibi_bias)
+            qk += (alibi_bias * 1.44269504)
 
         # Apply causal mask if IS_CAUSAL is True
         if IS_CAUSAL:
@@ -784,6 +809,7 @@ class _attention(torch.autograd.Function):
             V_new = input_metadata.v_new,
             Cache_seqlens=cache_seqlens,
             Cache_batch_idx=input_metadata.cache_batch_idx,
+            Alibi_slopes=input_metadata.alibi_slopes,
             **_strides(q, "qz", "qm", "qg", "qh", "qd"),
             **_strides(k, "kz", "kn", "kg", "kh", "kd"),
             **_strides(v, "vz", "vn", "vg", "vh", "vd"),
@@ -791,6 +817,7 @@ class _attention(torch.autograd.Function):
             **_strides(metadata, "mzhg", "m2", "ms", "mm"),
             **_strides(input_metadata.k_new, "kn_z", "kn_n", "kn_g", "kn_h", "kn_d"),
             **_strides(input_metadata.v_new, "vn_z", "vn_n", "vn_g", "vn_h", "vn_d"),
+            **_strides(input_metadata.alibi_slopes, "az", "ah"),
             Z=batch_size,
             H_q=heads_per_group_q,
             H_kv=heads_per_group_k,
@@ -808,6 +835,7 @@ class _attention(torch.autograd.Function):
             NEW_KV=input_metadata.new_kv,
             IS_GQA=input_metadata.is_gqa,
             IS_CAUSAL=input_metadata.causal,
+            USE_ALIBI=False if input_metadata.alibi_slopes is None else True,
             num_warps=num_warps,
             num_stages=1,
             PACKED_PER_VAL=PACKED_PER_VAL,
