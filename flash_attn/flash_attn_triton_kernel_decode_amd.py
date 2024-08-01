@@ -298,18 +298,12 @@ def _fwd_kernel_splitK(
             col_idx = start_n + tl.arange(0, BLOCK_N)
             # print("col_idx:", col_idx)
             
-           # Step 1: identify valid columns
-            col_mask = col_idx[None, :] < kv_len
+            # create a N_CTX_Q x kv_len causal mask
+            col_offset = N_CTX_Q - kv_len
+            causal_mask = row_idx[:, None] >= (col_offset + col_idx[None, :])
 
-            # Step 2: create causal mask with diagonal at bottom right corner of kv_len
-            causal_mask = row_idx[:, None] >= (N_CTX_Q - kv_len + col_idx[None, :])
-            
-            # Combine both masks
-            final_mask = col_mask & causal_mask
-            
-            
             # Apply the mask
-            qk = tl.where(final_mask, qk, float("-inf"))
+            qk = tl.where(causal_mask, qk, float("-inf"))
         # print("qk after causal:", qk)
 
         # TODO: This is slow, and only needed at the last iteration.

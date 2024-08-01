@@ -1913,13 +1913,13 @@ def test_flash_attn_splitkv(
 @pytest.mark.parametrize("dtype", [torch.float16])
 # @pytest.mark.parametrize("num_splits", [1, 0])
 @pytest.mark.parametrize("num_splits", [0])
-# @pytest.mark.parametrize("mha_type", ["mha", "mqa", "gqa"])
+@pytest.mark.parametrize("mha_type", ["mha", "mqa", "gqa"])
 # @pytest.mark.parametrize("mha_type", ["mha", "mqa"])
-@pytest.mark.parametrize("mha_type", ["mha"])
+# @pytest.mark.parametrize("mha_type", ["mha"])
 # @pytest.mark.parametrize("mha_type", ["mqa"])
 # @pytest.mark.parametrize("mha_type", ["gqa"])
-# @pytest.mark.parametrize("new_kv", [False, True])
-@pytest.mark.parametrize("new_kv", [False])
+@pytest.mark.parametrize("new_kv", [False, True])
+# @pytest.mark.parametrize("new_kv", [False])
 # @pytest.mark.parametrize("new_kv", [True])
 # @pytest.mark.parametrize("alibi", [False, True])
 @pytest.mark.parametrize("alibi", [False])
@@ -1937,8 +1937,8 @@ def test_flash_attn_splitkv(
 # @pytest.mark.parametrize("paged_kv_block_size", [None, 256])
 # @pytest.mark.parametrize("paged_kv_block_size", [256, 512])
 @pytest.mark.parametrize("paged_kv_block_size", [None])
-# @pytest.mark.parametrize("has_batch_idx", [False, True])
-@pytest.mark.parametrize("has_batch_idx", [False])
+@pytest.mark.parametrize("has_batch_idx", [False, True])
+# @pytest.mark.parametrize("has_batch_idx", [False])
 # @pytest.mark.parametrize("has_batch_idx", [True])
 @pytest.mark.parametrize("d", [32, 59, 64, 80, 128, 256])
 # @pytest.mark.parametrize("d", [32, 64, 96, 128, 160, 192, 224, 256])
@@ -2033,9 +2033,9 @@ def test_flash_attn_kvcache(
     device = "cuda"
     # set seed
     torch.random.manual_seed(0)
-    batch_size = 1 # 2
+    batch_size = 2 # 2
     batch_size_cache = batch_size if not has_batch_idx else batch_size * 2
-    nheads_q = 1 # 6
+    nheads_q = 6 # 6
     
     if DEBUG:
         print("nheads_q:", nheads_q)
