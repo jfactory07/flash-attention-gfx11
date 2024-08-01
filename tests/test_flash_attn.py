@@ -1925,9 +1925,9 @@ def test_flash_attn_splitkv(
 @pytest.mark.parametrize("alibi", [False])
 # @pytest.mark.parametrize("local", [False, True])
 @pytest.mark.parametrize("local", [False])
-# @pytest.mark.parametrize("causal", [False, True])
+@pytest.mark.parametrize("causal", [False, True])
 # @pytest.mark.parametrize("causal", [False])
-@pytest.mark.parametrize("causal", [True])
+# @pytest.mark.parametrize("causal", [True])
 # @pytest.mark.parametrize("seqlen_new_eq_seqlen_q", [True, False])
 @pytest.mark.parametrize("seqlen_new_eq_seqlen_q", [False])
 # @pytest.mark.parametrize("rotary_interleaved", [False, True])
@@ -1940,12 +1940,12 @@ def test_flash_attn_splitkv(
 # @pytest.mark.parametrize("has_batch_idx", [False, True])
 @pytest.mark.parametrize("has_batch_idx", [False])
 # @pytest.mark.parametrize("has_batch_idx", [True])
-# @pytest.mark.parametrize("d", [32, 59, 64, 80, 128, 256])
+@pytest.mark.parametrize("d", [32, 59, 64, 80, 128, 256])
 # @pytest.mark.parametrize("d", [32, 64, 96, 128, 160, 192, 224, 256])
 # @pytest.mark.parametrize('d', [32, 40, 64, 80, 96, 128, 160, 192])
 # @pytest.mark.parametrize('d', [56, 80])
 # @pytest.mark.parametrize("d", [128])
-@pytest.mark.parametrize("d", [16])
+# @pytest.mark.parametrize("d", [16])
 @pytest.mark.parametrize(
     "seqlen_q,seqlen_k",
     [  
@@ -1955,6 +1955,7 @@ def test_flash_attn_splitkv(
         # (2, 4),
         # (4, 2),
         # (4, 4),
+        # (4, 8),
         # (1, 4),
         # (16, 64),
         # (1, 4),

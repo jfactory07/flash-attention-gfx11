@@ -294,13 +294,22 @@ def _fwd_kernel_splitK(
         # Apply causal mask if IS_CAUSAL is True
         if IS_CAUSAL:
             row_idx = start_m * BLOCK_M + tl.arange(0, BLOCK_M)
-            if USE_CACHE_SEQLENs:
-                cache_seqlen = tl.load(Cache_seqlens + off_z)
-                col_idx = cache_seqlen + start_n + tl.arange(0, BLOCK_N)
-            else:
-                col_idx = start_n + tl.arange(0, BLOCK_N)
-            causal_mask = row_idx[:, None] >= col_idx[None, :]
-            qk = tl.where(causal_mask, qk, float("-inf"))
+            # print("row_idx:", row_idx)
+            col_idx = start_n + tl.arange(0, BLOCK_N)
+            # print("col_idx:", col_idx)
+            
+           # Step 1: identify valid columns
+            col_mask = col_idx[None, :] < kv_len
+
+            # Step 2: create causal mask with diagonal at bottom right corner of kv_len
+            causal_mask = row_idx[:, None] >= (N_CTX_Q - kv_len + col_idx[None, :])
+            
+            # Combine both masks
+            final_mask = col_mask & causal_mask
+            
+            
+            # Apply the mask
+            qk = tl.where(final_mask, qk, float("-inf"))
         # print("qk after causal:", qk)
 
         # TODO: This is slow, and only needed at the last iteration.
@@ -507,9 +516,9 @@ def _splitK_reduce(
         l_sum = tl.load(Metadata_ptr + stride_m2)
         acc = tl.load(o_ptr)
 
-    print("l_m:", l_m)
-    print("l_sum:", l_sum)
-    print("acc:", acc)
+    # print("l_m:", l_m)
+    # print("l_sum:", l_sum)
+    # print("acc:", acc)
 
     g_m = tl.max(l_m, axis=0)
     
