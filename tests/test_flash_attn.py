@@ -34,16 +34,20 @@ def is_amd():
         return True
     return False
 
-def skip_config(*args, reproducible=True):
+def skip_config(*args, reproducible=False, skip_pct = 0.80):
     config_str = '_'.join(map(str, args))
     
     if reproducible:
         # this ensures that the same config will always get the same result
-        random.seed(config_str)
+        skip_seed = config_str
     else:
-        random.seed(time.time())
+        skip_seed = time.time()
     
-    return random.random() >= 0.10
+    print("skip_seed:", skip_seed)
+    random.seed(config_str)
+    
+    
+    return random.random() >= (1.0 - skip_pct)
 
 
 def attn_bias_from_alibi_slopes(
