@@ -43,7 +43,7 @@ def skip_config(*args, reproducible=True):
     else:
         random.seed(time.time())
     
-    return random.random() >= 0.25
+    return random.random() >= 0.10
 
 
 def attn_bias_from_alibi_slopes(
