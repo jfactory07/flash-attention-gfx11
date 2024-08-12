@@ -978,8 +978,6 @@ def test_flash_attn_varlen_qkvpacked(
         assert (dqkv - dqkv_ref).abs().max().item() <= 2 * (dqkv_pt - dqkv_ref).abs().max().item()
 
 
-
-
 @pytest.mark.parametrize("kvpacked", [True, False])
 # @pytest.mark.parametrize("kvpacked", [False])
 @pytest.mark.parametrize("dtype", ([torch.float16] if is_sm75 else [torch.float16, torch.bfloat16]))
@@ -1019,8 +1017,9 @@ def test_flash_attn_varlen_qkvpacked(
 @pytest.mark.parametrize("dropout_p", [0.0, 0.17])
 # @pytest.mark.parametrize("dropout_p", [0.0])
 @pytest.mark.parametrize("softcap", [0.0, 50.0])
+@pytest.mark.parametrize("test_backward", [False, True])
 def test_flash_attn_output(
-    seqlen_q, seqlen_k, d, dropout_p, causal, local, alibi, deterministic, mha_type, dtype, kvpacked, softcap, forward_only=True
+    seqlen_q, seqlen_k, d, dropout_p, causal, local, alibi, deterministic, mha_type, dtype, kvpacked, softcap, test_backward
 ):
 
     if is_amd():
@@ -1029,6 +1028,9 @@ def test_flash_attn_output(
 
         if softcap != 0.0:
             pytest.skip("softcap not supported on AMD yet")
+
+        if test_backward == True:
+            pytest.skip("Backward Attention not supported on AMD yet")
 
         if skip_config(seqlen_q, seqlen_k, d):
             pytest.skip("Randomly skipping this configuration to limit test time")
@@ -1208,16 +1210,10 @@ def test_flash_attn_output(
         print(f"Attention max diff: {(attn - attn_ref).abs().max().item()}")
         print(f"Attention Pytorch max diff: {(attn_pt - attn_ref).abs().max().item()}")
 
-    if forward_only:
-        assert (out - out_ref).abs().max().item() <= 2 * (out - out_ref).abs().max().item()
-        assert (out_pt - out_ref).abs().max().item() <= 2 * (out_pt - out_ref).abs().max().item()
-        return
-        
-
-
     g = torch.randn_like(out)
     do_o = (g.float() * out.float()).sum(-1)
-    if (d <= MAX_HEADDIM_SM8x or dropout_p == 0) or (is_sm80 or is_sm90):
+    test_backward = test_backward and ((d <= MAX_HEADDIM_SM8x or dropout_p == 0) or (is_sm80 or is_sm90))
+    if test_backward:
         if kvpacked:
             (
                 dq,
@@ -1283,7 +1279,7 @@ def test_flash_attn_output(
         print("dv_ref", dv_ref)
         print("dv_pt", dv_pt)
 
-    if (d <= MAX_HEADDIM_SM8x or dropout_p == 0) or (is_sm80 or is_sm90):
+    if test_backward:
         assert (dq - dq_ref).abs().max().item() <= 3 * (dq_pt - dq_ref).abs().max().item()
         assert (dk - dk_ref).abs().max().item() <= 3 * (dk_pt - dk_ref).abs().max().item()
         assert (dv - dv_ref).abs().max().item() <= 3 * (dv_pt - dv_ref).abs().max().item()
@@ -1326,8 +1322,9 @@ def test_flash_attn_output(
 @pytest.mark.parametrize("dropout_p", [0.0, 0.17])
 @pytest.mark.parametrize("softcap", [0.0, 50.0])
 # @pytest.mark.parametrize('dropout_p', [0.0])
+@pytest.mark.parametrize("test_backward", [False, True])
 def test_flash_attn_varlen_output(
-    seqlen_q, seqlen_k, d, dropout_p, causal, local, alibi, deterministic, mha_type, dtype, kvpacked, softcap, forward_only=True
+    seqlen_q, seqlen_k, d, dropout_p, causal, local, alibi, deterministic, mha_type, dtype, kvpacked, softcap, test_backward
 ):
     if is_amd():
         if dropout_p != 0.0:
@@ -1338,6 +1335,9 @@ def test_flash_attn_varlen_output(
         
         if softcap != 0.0:
             pytest.skip("softcap not supported on AMD yet")
+
+        if test_backward == True:
+            pytest.skip("Backward Attention not supported on AMD yet")
         
         if skip_config(seqlen_q, seqlen_k, d):
             pytest.skip("Randomly skipping this configuration to limit test time")
@@ -1555,15 +1555,9 @@ def test_flash_attn_varlen_output(
         print(f"Attention max diff: {(attn - attn_ref).abs().max().item()}")
         print(f"Attention Pytorch max diff: {(attn_pt - attn_ref).abs().max().item()}")
 
-    
-    if forward_only:
-        assert (out - out_ref).abs().max().item() <= 2 * (out - out_ref).abs().max().item()
-        assert (out_pt - out_ref).abs().max().item() <= 2 * (out_pt - out_ref).abs().max().item()
-        return
-    
-    
     g = torch.randn_like(out)
-    if ((d <= MAX_HEADDIM_SM8x or dropout_p == 0) or (is_sm80 or is_sm90)):
+    test_backward = test_backward and ((d <= MAX_HEADDIM_SM8x or dropout_p == 0) or (is_sm80 or is_sm90))
+    if test_backward:
         if kvpacked:
             (
                 dq_unpad,
@@ -1622,7 +1616,7 @@ def test_flash_attn_varlen_output(
         if not alibi:
             assert abs(dropout_fraction - dropout_p) <= (0.01 if not local else 0.04)
 
-    if (d <= MAX_HEADDIM_SM8x or dropout_p == 0) or (is_sm80 or is_sm90):
+    if test_backward:
         assert (dq - dq_ref).abs().max().item() <= 3 * (dq_pt - dq_ref).abs().max().item()
         assert (dk - dk_ref).abs().max().item() <= 3 * (dk_pt - dk_ref).abs().max().item()
         assert (dv - dv_ref).abs().max().item() <= 3 * (dv_pt - dv_ref).abs().max().item()
