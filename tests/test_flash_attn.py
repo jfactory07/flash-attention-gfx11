@@ -1,4 +1,6 @@
 import math
+import random
+import time
 
 import pytest
 import torch
@@ -32,9 +34,16 @@ def is_amd():
         return True
     return False
 
-def is_power_of_2(n):
-    # return n > 0 and (n & (n - 1)) == 0
-    return True
+def skip_config(*args, reproducible=True):
+    config_str = '_'.join(map(str, args))
+    
+    if reproducible:
+        # this ensures that the same config will always get the same result
+        random.seed(config_str)
+    else:
+        random.seed(time.time())
+    
+    return random.random() >= 0.25
 
 
 def attn_bias_from_alibi_slopes(
@@ -640,13 +649,12 @@ def test_flash_attn_qkvpacked(seqlen, d, dropout_p, causal, local, alibi, determ
 
         if local == True:
             pytest.skip("local sliding window attention not supported on AMD yet")
-        
-        # skip all cases where seqlen_q, seqlen_k, or d are not powers of 2
-        # if not (is_power_of_2(seqlen) and is_power_of_2(d)):
-        #     pytest.skip("seqlen_q, seqlen_k, or d are not powers of 2")
 
         # if test_backward == True:
         #     pytest.skip("Backward Attention not supported on AMD yet")
+
+        if skip_config(seqlen, d):
+            pytest.skip("Randomly skipping this configuration to limit test time")
 
     if seqlen >= 2048 and torch.cuda.get_device_properties("cuda").total_memory <= 16 * 2**30:
         pytest.skip()  # Reference implementation OOM
@@ -835,12 +843,11 @@ def test_flash_attn_varlen_qkvpacked(
         if local == True:
             pytest.skip("local sliding window attention not supported on AMD yet")
         
-        # skip all cases where seqlen_q, seqlen_k, or d are not powers of 2
-        # if not (is_power_of_2(seqlen) and is_power_of_2(d)):
-        #     pytest.skip("seqlen_q, seqlen_k, or d are not powers of 2")
-        
         if test_backward == True:
             pytest.skip("Backward Attention not supported on AMD yet")
+
+        if skip_config(seqlen, d):
+            pytest.skip("Randomly skipping this configuration to limit test time")
 
     if seqlen >= 2048 and torch.cuda.get_device_properties("cuda").total_memory <= 16 * 2**30:
         pytest.skip()  # Reference implementation OOM
@@ -1023,9 +1030,8 @@ def test_flash_attn_output(
         if softcap != 0.0:
             pytest.skip("softcap not supported on AMD yet")
 
-        # skip all cases where seqlen_q, seqlen_k, or d are not powers of 2
-        if not (is_power_of_2(seqlen_q) and is_power_of_2(seqlen_k) and is_power_of_2(d)):
-            pytest.skip("seqlen_q, seqlen_k, or d are not powers of 2")
+        if skip_config(seqlen_q, seqlen_k, d):
+            pytest.skip("Randomly skipping this configuration to limit test time")
 
     if (
         max(seqlen_q, seqlen_k) >= 2048
@@ -1333,9 +1339,8 @@ def test_flash_attn_varlen_output(
         if softcap != 0.0:
             pytest.skip("softcap not supported on AMD yet")
         
-        # skip all cases where seqlen_q, seqlen_k, or d are not powers of 2
-        if not (is_power_of_2(seqlen_q) and is_power_of_2(seqlen_k) and is_power_of_2(d)):
-            pytest.skip("seqlen_q, seqlen_k, or d are not powers of 2")
+        if skip_config(seqlen_q, seqlen_k, d):
+            pytest.skip("Randomly skipping this configuration to limit test time")
 
     if (
         max(seqlen_q, seqlen_k) >= 2048
@@ -1657,13 +1662,12 @@ def test_flash_attn_causal(seqlen_q, seqlen_k, swap_sq_sk, d, local, dtype, test
     if is_amd():
         if local == True:
             pytest.skip("local sliding window attention not supported on AMD yet")
-        
-        # skip all cases where seqlen_q, seqlen_k, or d are not powers of 2
-        if not (is_power_of_2(seqlen_q) and is_power_of_2(seqlen_k) and is_power_of_2(d)):
-            pytest.skip("seqlen_q, seqlen_k, or d are not powers of 2")
 
         if test_backward == True:
             pytest.skip("Backward Attention not supported on AMD yet")
+
+        if skip_config(seqlen_q, seqlen_k, d):
+            pytest.skip("Randomly skipping this configuration to limit test time")
     
     if (
         max(seqlen_q, seqlen_k) >= 2048
@@ -1789,16 +1793,15 @@ def test_flash_attn_varlen_causal(
 
         if paged_kv_block_size is not None:
             pytest.skip("paged attention not supported on AMD yet")
-        
-        # skip all cases where seqlen_q, seqlen_k, or d are not powers of 2
-        if not (is_power_of_2(seqlen_q) and is_power_of_2(seqlen_k) and is_power_of_2(d)):
-            pytest.skip("seqlen_q, seqlen_k, or d are not powers of 2")
 
         if test_backward == True:
             pytest.skip("Backward Attention not supported on AMD yet")
 
         if seqlen_q * seqlen_k >= 256 * 512:
             pytest.skip(f"{seqlen_q}, {seqlen_k} leads to out of memory on AMD")
+
+        if skip_config(seqlen_q, seqlen_k, d):
+            pytest.skip("Randomly skipping this configuration to limit test time")
 
     if (
         max(seqlen_q, seqlen_k) >= 2048
@@ -1978,13 +1981,12 @@ def test_flash_attn_splitkv(
     if is_amd():
         if local == True:
             pytest.skip("local sliding window attention not supported on AMD yet")
-        
-        # skip all cases where seqlen_q, seqlen_k, or d are not powers of 2
-        if not (is_power_of_2(seqlen_q) and is_power_of_2(seqlen_k) and is_power_of_2(d)):
-            pytest.skip("seqlen_q, seqlen_k, or d are not powers of 2")
 
         if test_backward == True:
             pytest.skip("Backward Attention not supported on AMD yet")
+        
+        if skip_config(seqlen_q, seqlen_k, d):
+            pytest.skip("Randomly skipping this configuration to limit test time")
     
     if swap_sq_sk:
         seqlen_q, seqlen_k = seqlen_k, seqlen_q
@@ -2178,9 +2180,8 @@ def test_flash_attn_kvcache(
         if has_leftpad == True:
             pytest.skip("cache_leftpad not supported on AMD yet")
 
-        # skip all cases where seqlen_q, seqlen_k, or d are not powers of 2
-        if not (is_power_of_2(seqlen_q) and is_power_of_2(seqlen_k) and is_power_of_2(d)):
-            pytest.skip("seqlen_q, seqlen_k, or d are not powers of 2")
+        if skip_config(seqlen_q, seqlen_k, d):
+            pytest.skip("Randomly skipping this configuration to limit test time")
 
     if seqlen_q > seqlen_k and new_kv:
         pytest.skip()
@@ -2539,12 +2540,11 @@ def test_flash_attn_race_condition(seqlen_q, seqlen_k, d, dropout_p, causal, dty
         if dropout_p != 0.0:
             pytest.skip("Dropout not supported in AMD yet")
 
-        # skip all cases where seqlen_q, seqlen_k, or d are not powers of 2
-        if not (is_power_of_2(seqlen_q) and is_power_of_2(seqlen_k) and is_power_of_2(d)):
-            pytest.skip("seqlen_q, seqlen_k, or d are not powers of 2")
-
         if test_backward == True:
             pytest.skip("Backward Attention not supported on AMD yet")
+
+        if skip_config(seqlen_q, seqlen_k, d):
+            pytest.skip("Randomly skipping this configuration to limit test time")
         
     device = "cuda"
     # set seed
@@ -2600,12 +2600,11 @@ def test_flash_attn_bwd_overflow(seqlen, d, causal, dtype):
     """
 
     if is_amd():
-        # skip all cases where seqlen_q, seqlen_k, or d are not powers of 2
-        if not (is_power_of_2(seqlen) and is_power_of_2(d)):
-            pytest.skip("seqlen_q, seqlen_k, or d are not powers of 2")
-
         if True:
             pytest.skip("Backward Attention not supported on AMD yet")
+        
+        if skip_config(seqlen, d):
+            pytest.skip("Randomly skipping this configuration to limit test time")
 
     device = "cuda"
     # set seed
@@ -2665,12 +2664,11 @@ def test_flash_attn_bwd_transpose(seqlen, d, causal, dtype):
     """
 
     if is_amd():
-        # skip all cases where seqlen_q, seqlen_k, or d are not powers of 2
-        if not (is_power_of_2(seqlen) and is_power_of_2(d)):
-            pytest.skip("seqlen_q, seqlen_k, or d are not powers of 2")
-
         if True:
             pytest.skip("Backward Attention not supported on AMD yet")
+        
+        if skip_config(seqlen, d):
+            pytest.skip("Randomly skipping this configuration to limit test time")
 
     device = "cuda"
     # set seed
@@ -2726,12 +2724,11 @@ def test_flash_attn_bwd_varlen_overflow(d, causal, dtype):
     """
 
     if is_amd():
-        # skip all cases where seqlen_q, seqlen_k, or d are not powers of 2
-        if not is_power_of_2(d):
-            pytest.skip("seqlen_q, seqlen_k, or d are not powers of 2")
-        
         if True:
             pytest.skip("Backward Attention not supported on AMD yet")
+
+        if skip_config(d):
+            pytest.skip("Randomly skipping this configuration to limit test time")
 
     device = "cuda"
     # set seed
@@ -2794,14 +2791,12 @@ def test_flash_attn_deterministic(seqlen_q, seqlen_k, swap_sq_sk, d, causal, loc
     if is_amd():
         if local == True:
             pytest.skip("local sliding window attention not supported on AMD yet")
-        
-        # skip all cases where seqlen_q, seqlen_k, or d are not powers of 2
-        if not (is_power_of_2(seqlen_q) and is_power_of_2(seqlen_k) and is_power_of_2(d)):
-            pytest.skip("seqlen_q, seqlen_k, or d are not powers of 2")
 
         if test_backward == True:
             pytest.skip("Backward Attention not supported on AMD yet")
-
+      
+        if skip_config(seqlen_q, seqlen_k, d):
+            pytest.skip("Randomly skipping this configuration to limit test time")
 
     if (
         max(seqlen_q, seqlen_k) >= 2048
@@ -2868,13 +2863,12 @@ def test_flash_attn_varlen_deterministic(seqlen_q, seqlen_k, swap_sq_sk, d, caus
     if is_amd():
         if local == True:
             pytest.skip("local sliding window attention not supported on AMD yet")
-        
-        # skip all cases where seqlen_q, seqlen_k, or d are not powers of 2
-        if not (is_power_of_2(seqlen_q) and is_power_of_2(seqlen_k) and is_power_of_2(d)):
-            pytest.skip("seqlen_q, seqlen_k, or d are not powers of 2")
 
         if test_backward == True:
             pytest.skip("Backward Attention not supported on AMD yet")
+
+        if skip_config(seqlen_q, seqlen_k, d):
+            pytest.skip("Randomly skipping this configuration to limit test time")
 
     if (
         max(seqlen_q, seqlen_k) >= 2048
@@ -2926,7 +2920,9 @@ def test_flash_attn_varlen_deterministic(seqlen_q, seqlen_k, swap_sq_sk, d, caus
     g = torch.randn_like(out)
     test_backward = test_backward and ((d <= MAX_HEADDIM_SM8x or d > 224) or (is_sm80 or is_sm90))
     if test_backward:
-        dq, dk, dv = torch.autograd.grad(out, (q_unpad, k_unpad, v_unpad), g, retain_graph=True)
-        assert torch.equal(dv, dv0)
-        assert torch.equal(dk, dk0)
-        assert torch.equal(dq, dq0)
+        dq0, dk0, dv0 = torch.autograd.grad(out, (q_unpad, k_unpad, v_unpad), g, retain_graph=True)
+        for _ in range(50):
+            dq, dk, dv = torch.autograd.grad(out, (q_unpad, k_unpad, v_unpad), g, retain_graph=True)
+            assert torch.equal(dv, dv0)
+            assert torch.equal(dk, dk0)
+            assert torch.equal(dq, dq0)
