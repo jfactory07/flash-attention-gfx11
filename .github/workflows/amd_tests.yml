@@ -58,33 +58,33 @@ jobs:
           python setup.py install
       - name: Flash Attention qkvpacked Tests
         run: |
-          pytest tests/test_flash_attn.py::test_flash_attn_qkvpacked
-          pytest tests/test_flash_attn.py::test_flash_attn_varlen_qkvpacked
+          pytest -x tests/test_flash_attn.py::test_flash_attn_qkvpacked
+          pytest -x tests/test_flash_attn.py::test_flash_attn_varlen_qkvpacked
       - name: Flash Attention output Tests
         run: |
-          pytest tests/test_flash_attn.py::test_flash_attn_output
-          pytest tests/test_flash_attn.py::test_flash_attn_varlen_output
+          pytest -x tests/test_flash_attn.py::test_flash_attn_output
+          pytest -x tests/test_flash_attn.py::test_flash_attn_varlen_output
       - name: Flash Attention causal Tests
         run: |
-          pytest tests/test_flash_attn.py::test_flash_attn_causal
-          pytest tests/test_flash_attn.py::test_flash_attn_varlen_causal
+          pytest -x tests/test_flash_attn.py::test_flash_attn_causal
+          pytest -x tests/test_flash_attn.py::test_flash_attn_varlen_causal
       - name: Flash Attention kvcache Tests
         run: |
-          pytest tests/test_flash_attn.py::test_flash_attn_splitkv
-          pytest tests/test_flash_attn.py::test_flash_attn_kvcache
+          pytest -x tests/test_flash_attn.py::test_flash_attn_splitkv
+          pytest -x tests/test_flash_attn.py::test_flash_attn_kvcache
       - name: Flash Attention race condition Tests
         run: |
-          pytest tests/test_flash_attn.py::test_flash_attn_race_condition
+          pytest -x tests/test_flash_attn.py::test_flash_attn_race_condition
       - name: Flash Attention bwd Tests
         run: |
-          pytest tests/test_flash_attn.py::test_flash_attn_bwd_overflow
-          pytest tests/test_flash_attn.py::test_flash_attn_bwd_transpose
-          pytest tests/test_flash_attn.py::test_flash_attn_bwd_varlen_overflow
+          pytest -x tests/test_flash_attn.py::test_flash_attn_bwd_overflow
+          pytest -x tests/test_flash_attn.py::test_flash_attn_bwd_transpose
+          pytest -x tests/test_flash_attn.py::test_flash_attn_bwd_varlen_overflow
       - name: Flash Attention deterministic Tests
         run: |
-          pytest tests/test_flash_attn.py::test_flash_attn_deterministic
-          pytest tests/test_flash_attn.py::test_flash_attn_varlen_deterministic
+          pytest -x tests/test_flash_attn.py::test_flash_attn_deterministic
+          pytest -x tests/test_flash_attn.py::test_flash_attn_varlen_deterministic
       - name: AMD Kernel Tests
         run: |
-          pytest flash_attn/flash_attn_triton_kernel_decode_amd.py::test_op_fwd
-          pytest flash_attn/flash_attn_triton_kernel_prefill_amd.py
+          pytest -x flash_attn/flash_attn_triton_kernel_decode_amd.py::test_op_fwd
+          pytest -x flash_attn/flash_attn_triton_kernel_prefill_amd.py

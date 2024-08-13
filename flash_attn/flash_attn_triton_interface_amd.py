@@ -3,7 +3,7 @@ import triton
 from .flash_attn_triton_kernel_prefill_amd import MetaData, get_shape_from_layout, _attention_prefill
 from .flash_attn_triton_kernel_decode_amd import attention_decode
 
-DEBUG = True
+DEBUG = False
 
 class AttentionContext:
     def __init__(self, q, k, v, o, M, sm_scale, causal, alibi_slopes, dropout_p, BLOCK_DMODEL):
