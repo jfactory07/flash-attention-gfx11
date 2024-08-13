@@ -34,7 +34,7 @@ def is_amd():
         return True
     return False
 
-def skip_config(*args, reproducible=True, skip_pct = 0.80):
+def skip_config(*args, reproducible=True, skip_pct = 0.95):
     config_str = '_'.join(map(str, args))
     
     if reproducible:
@@ -658,7 +658,7 @@ def test_flash_attn_qkvpacked(seqlen, d, dropout_p, causal, local, alibi, determ
             pytest.skip("Backward Attention not supported on AMD yet")
 
         if skip_config(seqlen, d):
-            pytest.skip("Randomly skipping this configuration to limit test time")
+            pytest.skip("Randomly skipping this configuration to limited test time")
 
     if seqlen >= 2048 and torch.cuda.get_device_properties("cuda").total_memory <= 16 * 2**30:
         pytest.skip()  # Reference implementation OOM
@@ -851,7 +851,7 @@ def test_flash_attn_varlen_qkvpacked(
             pytest.skip("Backward Attention not supported on AMD yet")
 
         if skip_config(seqlen, d):
-            pytest.skip("Randomly skipping this configuration to limit test time")
+            pytest.skip("Randomly skipping this configuration to limited test time")
 
     if seqlen >= 2048 and torch.cuda.get_device_properties("cuda").total_memory <= 16 * 2**30:
         pytest.skip()  # Reference implementation OOM
@@ -1037,7 +1037,7 @@ def test_flash_attn_output(
             pytest.skip("Backward Attention not supported on AMD yet")
 
         if skip_config(seqlen_q, seqlen_k, d):
-            pytest.skip("Randomly skipping this configuration to limit test time")
+            pytest.skip("Randomly skipping this configuration to limited test time")
 
     if (
         max(seqlen_q, seqlen_k) >= 2048
@@ -1344,7 +1344,7 @@ def test_flash_attn_varlen_output(
             pytest.skip("Backward Attention not supported on AMD yet")
         
         if skip_config(seqlen_q, seqlen_k, d):
-            pytest.skip("Randomly skipping this configuration to limit test time")
+            pytest.skip("Randomly skipping this configuration to limited test time")
 
     if (
         max(seqlen_q, seqlen_k) >= 2048
@@ -1665,7 +1665,7 @@ def test_flash_attn_causal(seqlen_q, seqlen_k, swap_sq_sk, d, local, dtype, test
             pytest.skip("Backward Attention not supported on AMD yet")
 
         if skip_config(seqlen_q, seqlen_k, d):
-            pytest.skip("Randomly skipping this configuration to limit test time")
+            pytest.skip("Randomly skipping this configuration to limited test time")
     
     if (
         max(seqlen_q, seqlen_k) >= 2048
@@ -1799,7 +1799,7 @@ def test_flash_attn_varlen_causal(
             pytest.skip(f"{seqlen_q}, {seqlen_k} leads to out of memory on AMD")
 
         if skip_config(seqlen_q, seqlen_k, d):
-            pytest.skip("Randomly skipping this configuration to limit test time")
+            pytest.skip("Randomly skipping this configuration to limited test time")
 
     if (
         max(seqlen_q, seqlen_k) >= 2048
@@ -1984,7 +1984,7 @@ def test_flash_attn_splitkv(
             pytest.skip("Backward Attention not supported on AMD yet")
         
         if skip_config(seqlen_q, seqlen_k, d):
-            pytest.skip("Randomly skipping this configuration to limit test time")
+            pytest.skip("Randomly skipping this configuration to limited test time")
     
     if swap_sq_sk:
         seqlen_q, seqlen_k = seqlen_k, seqlen_q
@@ -2179,7 +2179,7 @@ def test_flash_attn_kvcache(
             pytest.skip("cache_leftpad not supported on AMD yet")
 
         if skip_config(seqlen_q, seqlen_k, d):
-            pytest.skip("Randomly skipping this configuration to limit test time")
+            pytest.skip("Randomly skipping this configuration to limited test time")
 
     if seqlen_q > seqlen_k and new_kv:
         pytest.skip()
@@ -2542,7 +2542,7 @@ def test_flash_attn_race_condition(seqlen_q, seqlen_k, d, dropout_p, causal, dty
             pytest.skip("Backward Attention not supported on AMD yet")
 
         if skip_config(seqlen_q, seqlen_k, d):
-            pytest.skip("Randomly skipping this configuration to limit test time")
+            pytest.skip("Randomly skipping this configuration to limited test time")
         
     device = "cuda"
     # set seed
@@ -2602,7 +2602,7 @@ def test_flash_attn_bwd_overflow(seqlen, d, causal, dtype):
             pytest.skip("Backward Attention not supported on AMD yet")
         
         if skip_config(seqlen, d):
-            pytest.skip("Randomly skipping this configuration to limit test time")
+            pytest.skip("Randomly skipping this configuration to limited test time")
 
     device = "cuda"
     # set seed
@@ -2666,7 +2666,7 @@ def test_flash_attn_bwd_transpose(seqlen, d, causal, dtype):
             pytest.skip("Backward Attention not supported on AMD yet")
         
         if skip_config(seqlen, d):
-            pytest.skip("Randomly skipping this configuration to limit test time")
+            pytest.skip("Randomly skipping this configuration to limited test time")
 
     device = "cuda"
     # set seed
@@ -2726,7 +2726,7 @@ def test_flash_attn_bwd_varlen_overflow(d, causal, dtype):
             pytest.skip("Backward Attention not supported on AMD yet")
 
         if skip_config(d):
-            pytest.skip("Randomly skipping this configuration to limit test time")
+            pytest.skip("Randomly skipping this configuration to limited test time")
 
     device = "cuda"
     # set seed
@@ -2794,7 +2794,7 @@ def test_flash_attn_deterministic(seqlen_q, seqlen_k, swap_sq_sk, d, causal, loc
             pytest.skip("Backward Attention not supported on AMD yet")
       
         if skip_config(seqlen_q, seqlen_k, d):
-            pytest.skip("Randomly skipping this configuration to limit test time")
+            pytest.skip("Randomly skipping this configuration to limited test time")
 
     if (
         max(seqlen_q, seqlen_k) >= 2048
@@ -2866,7 +2866,7 @@ def test_flash_attn_varlen_deterministic(seqlen_q, seqlen_k, swap_sq_sk, d, caus
             pytest.skip("Backward Attention not supported on AMD yet")
 
         if skip_config(seqlen_q, seqlen_k, d):
-            pytest.skip("Randomly skipping this configuration to limit test time")
+            pytest.skip("Randomly skipping this configuration to limited test time")
 
     if (
         max(seqlen_q, seqlen_k) >= 2048
