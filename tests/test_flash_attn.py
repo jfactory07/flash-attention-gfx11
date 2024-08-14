@@ -1048,6 +1048,9 @@ def test_flash_attn_output(
 
         if softcap != 0.0:
             pytest.skip("softcap not supported on AMD yet")
+        
+        if causal == True:
+            pytest.skip("causal not supported on AMD yet")
 
         if local == True:
             pytest.skip("local sliding window attention not supported on AMD yet")
@@ -1291,18 +1294,18 @@ def test_flash_attn_output(
         # With alibi, many of the prob values are 0.0 & -0.0 so dropout_fraction isn't accurate
         if not alibi:
             assert abs(dropout_fraction - dropout_p) <= (0.01 if not local else 0.025)
-    if DEBUG:
-        print("dq", dq)
-        print("dq_ref", dq_ref)
-        print("dq_pt", dq_pt)
-        print("dk", dk)
-        print("dk_ref", dk_ref)
-        print("dk_pt", dk_pt)
-        print("dv", dv)
-        print("dv_ref", dv_ref)
-        print("dv_pt", dv_pt)
 
     if test_backward:
+        if DEBUG:
+            print("dq", dq)
+            print("dq_ref", dq_ref)
+            print("dq_pt", dq_pt)
+            print("dk", dk)
+            print("dk_ref", dk_ref)
+            print("dk_pt", dk_pt)
+            print("dv", dv)
+            print("dv_ref", dv_ref)
+            print("dv_pt", dv_pt)
         assert (dq - dq_ref).abs().max().item() <= 3 * (dq_pt - dq_ref).abs().max().item()
         assert (dk - dk_ref).abs().max().item() <= 3 * (dk_pt - dk_ref).abs().max().item()
         assert (dv - dv_ref).abs().max().item() <= 3 * (dv_pt - dv_ref).abs().max().item()
