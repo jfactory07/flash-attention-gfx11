@@ -1352,6 +1352,24 @@ def test_flash_attn_output(
 def test_flash_attn_varlen_output(
     seqlen_q, seqlen_k, d, dropout_p, causal, local, alibi, deterministic, mha_type, dtype, kvpacked, softcap, test_backward
 ):
+    
+    if DEBUG:
+        print()
+        print("test_flash_attn_varlen_output")
+        print("seqlen_q:", seqlen_q)
+        print("seqlen_k:", seqlen_k )
+        print("d:", d )
+        print("dropout_p:", dropout_p )
+        print("causal:", causal )
+        print("local:",  local)
+        print("alibi:",  alibi)
+        print("deterministic:", deterministic )
+        print("mha_type:", mha_type )
+        print("dtype:", dtype )
+        print("kvpacked:",  kvpacked)
+        print("softcap:",  softcap)
+        print("test_backward:",  test_backward)
+
     if is_amd():
         if dropout_p != 0.0:
             pytest.skip("Dropout not supported in AMD yet")
@@ -1361,6 +1379,9 @@ def test_flash_attn_varlen_output(
         
         if softcap != 0.0:
             pytest.skip("softcap not supported on AMD yet")
+
+        if causal == True:
+            pytest.skip("causal not supported on AMD yet")
 
         if test_backward == True:
             pytest.skip("Backward Attention not supported on AMD yet")
