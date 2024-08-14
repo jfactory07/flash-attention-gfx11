@@ -1700,6 +1700,17 @@ def test_flash_attn_varlen_output(
 @pytest.mark.parametrize("test_backward", [False, True])
 # @pytest.mark.parametrize("test_backward", [True])
 def test_flash_attn_causal(seqlen_q, seqlen_k, swap_sq_sk, d, local, dtype, test_backward):
+    if DEBUG:
+        print()
+        print("test_flash_attn_causal")
+        print("seqlen_q:", seqlen_q)
+        print("seqlen_k:", seqlen_k )
+        print("swap_sq_sk:", swap_sq_sk )
+        print("d:", d )
+        print("local:",  local)
+        print("dtype:", dtype )
+        print("test_backward:",  test_backward)
+
     if is_amd():
         if local == True:
             pytest.skip("local sliding window attention not supported on AMD yet")
