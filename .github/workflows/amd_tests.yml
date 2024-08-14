@@ -40,7 +40,7 @@ jobs:
       matrix:
         runner: ${{fromJson(needs.Runner-Preparation-AMD.outputs.matrix-HIP)}}
     container:
-      image: rocm/pytorch:rocm6.1.2_ubuntu20.04_py3.9_pytorch_staging
+      image: rocm/pytorch:rocm6.1.2_ubuntu22.04_py3.9_pytorch_staging
       options: --device=/dev/kfd --device=/dev/dri --security-opt seccomp=unconfined --group-add video --user root
     steps:
       - name: Checkout
