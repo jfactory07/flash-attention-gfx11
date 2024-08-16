@@ -330,30 +330,33 @@ def _attn_fwd_inner(acc, l_i, m_i, q, k_ptrs, v_ptrs, bias_ptrs, stride_kn, stri
             encoded_sm_ptrs += BLOCK_N
     return acc, l_i, m_i
 
+configs_tmp = [
+    triton.Config({'BLOCK_M': BM, 'BLOCK_N': BN, 'waves_per_eu': WE, 'PRE_LOAD_V': PV}, num_stages=1, num_warps=W) \
+    for BM in [16, 32]\
+    for BN in [16, 32]\
+    for WE in [1, 2, 3, 4]\
+    for PV in [False, True]\
+    for W in [1, 2, 4, 8]\
+]
+
+configs=[
+    triton.Config({'BLOCK_M': 32, 'BLOCK_N': 32, 'waves_per_eu': 4, 'PRE_LOAD_V': False}, num_warps=2, num_stages=1),
+    triton.Config({'BLOCK_M': 32, 'BLOCK_N': 32, 'waves_per_eu': 3, 'PRE_LOAD_V': True}, num_warps=1, num_stages=1),
+    triton.Config({'BLOCK_M': 32, 'BLOCK_N': 16, 'waves_per_eu': 2, 'PRE_LOAD_V': False}, num_warps=2, num_stages=1),
+    triton.Config({'BLOCK_M': 32, 'BLOCK_N': 16, 'waves_per_eu': 3, 'PRE_LOAD_V': False}, num_warps=2, num_stages=1),
+    triton.Config({'BLOCK_M': 32, 'BLOCK_N': 16, 'waves_per_eu': 2, 'PRE_LOAD_V': False}, num_warps=2, num_stages=1),
+    triton.Config({'BLOCK_M': 32, 'BLOCK_N': 16, 'waves_per_eu': 3, 'PRE_LOAD_V': False}, num_warps=2, num_stages=1),
+    triton.Config({'BLOCK_M': 32, 'BLOCK_N': 32, 'waves_per_eu': 4, 'PRE_LOAD_V': False}, num_warps=2, num_stages=1),
+    triton.Config({'BLOCK_M': 32, 'BLOCK_N': 16, 'waves_per_eu': 3, 'PRE_LOAD_V': False}, num_warps=2, num_stages=1),
+    triton.Config({'BLOCK_M': 32, 'BLOCK_N': 32, 'waves_per_eu': 4, 'PRE_LOAD_V': False}, num_warps=2, num_stages=1),
+    triton.Config({'BLOCK_M': 32, 'BLOCK_N': 32, 'waves_per_eu': 4, 'PRE_LOAD_V': False}, num_warps=2, num_stages=1),
+    triton.Config({'BLOCK_M': 32, 'BLOCK_N': 32, 'waves_per_eu': 4, 'PRE_LOAD_V': False}, num_warps=2, num_stages=1),
+    triton.Config({'BLOCK_M': 32, 'BLOCK_N': 32, 'waves_per_eu': 1, 'PRE_LOAD_V': True}, num_warps=2, num_stages=1),
+]
+
 
 @triton.autotune(
-    configs=[
-        triton.Config({'BLOCK_M': 256, 'BLOCK_N': 64, 'waves_per_eu': 2, 'PRE_LOAD_V': False}, num_stages=1,
-                      num_warps=8),
-        triton.Config({'BLOCK_M': 128, 'BLOCK_N': 128, 'waves_per_eu': 2, 'PRE_LOAD_V': False}, num_stages=1,
-                      num_warps=4),
-        triton.Config({'BLOCK_M': 256, 'BLOCK_N': 128, 'waves_per_eu': 2, 'PRE_LOAD_V': False}, num_stages=1,
-                      num_warps=8),
-        triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 3, 'PRE_LOAD_V': True}, num_stages=1,
-                      num_warps=4),
-        triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 3, 'PRE_LOAD_V': False}, num_stages=1,
-                      num_warps=4),
-        triton.Config({'BLOCK_M': 64, 'BLOCK_N': 64, 'waves_per_eu': 4, 'PRE_LOAD_V': False}, num_stages=1,
-                      num_warps=8),
-        triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 1, 'PRE_LOAD_V': False}, num_stages=1,
-                      num_warps=4),
-        triton.Config({'BLOCK_M': 32, 'BLOCK_N': 32, 'waves_per_eu': 4, 'PRE_LOAD_V': False}, num_stages=1,
-                      num_warps=8),
-        # TODO: This config fails with head_size not pow2 with data mismatches. Check why.
-        #    triton.Config({'BLOCK_M': 32, 'BLOCK_N': 16, 'waves_per_eu': 1, 'PRE_LOAD_V': False}, num_stages=1, num_warps=4),
-        triton.Config({'BLOCK_M': 16, 'BLOCK_N': 16, 'waves_per_eu': 1, 'PRE_LOAD_V': False}, num_stages=1,
-                      num_warps=4),
-    ],
+    configs,
     key=['IS_CAUSAL', 'dropout_p', 'BLOCK_DMODEL'],
     use_cuda_graph=True,
 )
