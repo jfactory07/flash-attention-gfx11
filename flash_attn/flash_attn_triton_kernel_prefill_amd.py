@@ -330,7 +330,7 @@ def _attn_fwd_inner(acc, l_i, m_i, q, k_ptrs, v_ptrs, bias_ptrs, stride_kn, stri
             encoded_sm_ptrs += BLOCK_N
     return acc, l_i, m_i
 
-configs_tmp = [
+configs_2 = [
     triton.Config({'BLOCK_M': BM, 'BLOCK_N': BN, 'waves_per_eu': WE, 'PRE_LOAD_V': PV}, num_stages=1, num_warps=W) \
     for BM in [16, 32]\
     for BN in [16, 32]\
@@ -339,7 +339,7 @@ configs_tmp = [
     for W in [1, 2, 4, 8]\
 ]
 
-configs=[
+configs_tmp=[
     triton.Config({'BLOCK_M': 32, 'BLOCK_N': 32, 'waves_per_eu': 4, 'PRE_LOAD_V': False}, num_warps=2, num_stages=1),
     triton.Config({'BLOCK_M': 32, 'BLOCK_N': 32, 'waves_per_eu': 3, 'PRE_LOAD_V': True}, num_warps=1, num_stages=1),
     triton.Config({'BLOCK_M': 32, 'BLOCK_N': 16, 'waves_per_eu': 2, 'PRE_LOAD_V': False}, num_warps=2, num_stages=1),
@@ -352,8 +352,17 @@ configs=[
     triton.Config({'BLOCK_M': 32, 'BLOCK_N': 32, 'waves_per_eu': 4, 'PRE_LOAD_V': False}, num_warps=2, num_stages=1),
     triton.Config({'BLOCK_M': 32, 'BLOCK_N': 32, 'waves_per_eu': 4, 'PRE_LOAD_V': False}, num_warps=2, num_stages=1),
     triton.Config({'BLOCK_M': 32, 'BLOCK_N': 32, 'waves_per_eu': 1, 'PRE_LOAD_V': True}, num_warps=2, num_stages=1),
+    
+    triton.Config({'BLOCK_M': 32, 'BLOCK_N': 16, 'waves_per_eu': 4, 'PRE_LOAD_V': False}, num_warps=2, num_stages=1),
 ]
 
+configs=[
+    triton.Config({'BLOCK_M': 32, 'BLOCK_N': 16, 'waves_per_eu': 4, 'PRE_LOAD_V': False}, num_warps=2, num_stages=1),
+]
+configs_test=[    
+    triton.Config({ "BLOCK_M": 64,"BLOCK_N": 64,"waves_per_eu": 4,"PRE_LOAD_V": False,},num_stages=1,num_warps=8,),
+    #triton.Config({"BLOCK_M": 32,"BLOCK_N": 32,"waves_per_eu": 4,"PRE_LOAD_V": False,},num_stages=1,num_warps=8,),
+]
 
 @triton.autotune(
     configs,
@@ -369,6 +378,7 @@ def attn_fwd(Q, K, V, bias, cache_seqlens, sm_scale, L, Out, stride_qz, stride_q
              MAX_SEQLENS_K: tl.constexpr, VARLEN: tl.constexpr, IS_CAUSAL: tl.constexpr, BLOCK_M: tl.constexpr,
              BLOCK_DMODEL: tl.constexpr, BLOCK_N: tl.constexpr, PRE_LOAD_V: tl.constexpr, USE_BIAS: tl.constexpr, NEW_KV: tl.constexpr, SEQLEN_NEW: tl.constexpr,
              USE_CACHE_SEQLENS: tl.constexpr, ENABLE_DROPOUT: tl.constexpr, RETURN_ENCODED_SOFTMAX: tl.constexpr, USE_ALIBI: tl.constexpr):
+    #return
     start_m = tl.program_id(0)
     off_h_q = tl.program_id(1)
     off_z = tl.program_id(2)
@@ -399,9 +409,8 @@ def attn_fwd(Q, K, V, bias, cache_seqlens, sm_scale, L, Out, stride_qz, stride_q
             seqlen_k = cache_seqlen + SEQLEN_NEW 
         else:
             seqlen_k = cache_seqlen
-    else:
-        seqlen_k = MAX_SEQLENS_K
-
+    #else:
+    #    seqlen_k = MAX_SEQLENS_K
     # Now we compute whether we need to exit early due to causal masking.
     # This is because for seqlen_q > seqlen_k, M rows of the attn scores
     # are completely masked, resulting in 0s written to the output, and
@@ -977,8 +986,8 @@ class _attention(torch.autograd.Function):
                        *bias_strides, *cache_seqlens_strides, *alibi_strides, metadata.cu_seqlens_q, metadata.cu_seqlens_k,
                        dropout_p=metadata.dropout_p, philox_seed=philox_seed, philox_offset_base=philox_offset,
                        encoded_softmax=encoded_softmax, alibi_slopes=metadata.alibi_slopes, HQ=nheads_q, HK=nheads_k,
-                       ACTUAL_BLOCK_DMODEL=head_size, MAX_SEQLENS_Q=metadata.max_seqlens_q,
-                       MAX_SEQLENS_K=metadata.max_seqlens_k, IS_CAUSAL=metadata.causal, VARLEN=metadata.varlen,
+                       ACTUAL_BLOCK_DMODEL=head_size, MAX_SEQLENS_Q=0,
+                       MAX_SEQLENS_K=0, IS_CAUSAL=metadata.causal, VARLEN=metadata.varlen,
                        BLOCK_DMODEL=padded_d_model, USE_BIAS=False if metadata.bias is None else True,
                        USE_CACHE_SEQLENS=False if metadata.cache_seqlens is None else True,
                        NEW_KV = metadata.new_kv, SEQLEN_NEW = metadata.seqlen_new,
